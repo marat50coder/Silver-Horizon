@@ -1,0 +1,32 @@
+name: horizongame
+description: "Silver Horizon slot game."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  webview_flutter: ^4.10.0
+  flutter_launcher_icons: ^0.14.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/Silver_Horizon_additional_assets/
+    - assets/Silver_Horizon_gameplay_assets/
+
+flutter_launcher_icons:
+  ios: true
+  android: false
+  image_path: "assets/Silver_Horizon_additional_assets/Icon.png"
+  remove_alpha_ios: true
