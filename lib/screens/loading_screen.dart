@@ -63,7 +63,7 @@ class _LoadingScreenState extends State<LoadingScreen>
       }
     });
 
-    _hardDeadline = Timer(const Duration(seconds: 11), () {
+    _hardDeadline = Timer(const Duration(seconds: 36), () {
       _barDone = true;
       _destination ??= const NativeTide();
       _maybeNavigate();

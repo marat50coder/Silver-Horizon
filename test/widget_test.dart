@@ -9,7 +9,7 @@ void main() {
     await tester.pumpWidget(const SilverHorizonApp());
     expect(find.byType(MaterialApp), findsOneWidget);
     // Drain the splash timers so the test does not leak a pending Timer.
-    await tester.pump(const Duration(seconds: 12));
+    await tester.pump(const Duration(seconds: 40));
     // Tear the tree down ourselves — the loading dot animation repeats
     // forever and pumpAndSettle would never return otherwise.
     await tester.pumpWidget(const SizedBox.shrink());

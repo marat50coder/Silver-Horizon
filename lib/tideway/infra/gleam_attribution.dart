@@ -120,23 +120,15 @@ class GleamAttribution {
       if (failed) {
         _install = <String, dynamic>{};
       } else if (received['af_status'] == 'Organic') {
-        // Organic on first callback is often a late-attribution race:
-        // the OneLink click reaches AF after the SDK already answered.
-        // Poll GCD a few times with growing back-off before giving up.
-        Map<String, dynamic>? late;
-        for (var attempt = 0; attempt < 3 && late == null; attempt++) {
-          await Future<void>.delayed(
-            Duration(
-              seconds: GleamHorizonConfig.organicRecheckSeconds + attempt * 5,
-            ),
-          );
-          final gcd = await _fetchGcd();
-          if (gcd != null && gcd['af_status'] != null &&
-              gcd['af_status'] != 'Organic') {
-            late = gcd;
-          }
+        // Publish immediately. A delayed GCD poll must not hold the
+        // completer: the splash used to time out and POST with no af_status.
+        _install = received;
+        final late = await _fetchGcd();
+        if (late != null &&
+            late['af_status'] != null &&
+            late['af_status'] != 'Organic') {
+          _install = late;
         }
-        _install = late ?? received;
       } else {
         _install = received;
       }
@@ -196,6 +188,11 @@ class GleamAttribution {
       ),
     ]);
   }
+
+  /// True once install conversion actually arrived. A timed-out wait leaves
+  /// this false — the coordinator must not lock the native route on that.
+  bool get sawAttribution =>
+      _install != null && _install!.containsKey('af_status');
 
   Future<String?> appsFlyerId() async {
     try {

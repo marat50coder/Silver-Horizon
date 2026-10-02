@@ -15,7 +15,7 @@ abstract final class GleamHorizonConfig {
   static const int organicRecheckSeconds = 8;
   static const int savedUrlExpiryDays = 9;
   static const int exchangeTimeoutSeconds = 18;
-  static const int installSignalSeconds = 7;
+  static const int installSignalSeconds = 22;
   static const int deepLinkSeconds = 6;
   static const int attWaitSeconds = 5;
   static const int attPromptDelayMs = 410;

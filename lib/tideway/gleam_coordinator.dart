@@ -126,6 +126,16 @@ class GleamCoordinator {
       await vault.saveRoute(TideRoute.portal);
       return PortalTide(reply.url!);
     }
+    // Conversion had not arrived (the POST body had no af_status). Do not
+    // lock the white route — the next cold start must run the pipeline again.
+    if (!attribution.sawAttribution) {
+      assert(() {
+        // ignore: avoid_print
+        print('[HZ.GLEAM] first: no af_status yet, leaving route undecided');
+        return true;
+      }());
+      return const NativeTide();
+    }
     await vault.saveRoute(TideRoute.native);
     return const NativeTide();
   }
@@ -208,6 +218,7 @@ class GleamCoordinator {
   }
 
   Future<void> _refreshForToken(String token) async {
+    if (!attribution.sawAttribution) return;
     try {
       await _requestConfig(token: token);
     } catch (_) {}
