@@ -18,7 +18,7 @@ class SceneDelegate: FlutterSceneDelegate {
        let destination = Self.destination(
          inside: response.notification.request.content.userInfo
        ) {
-      persist(destination)
+      Self.persist(destination)
     }
 
     super.scene(scene, willConnectTo: session, options: connectionOptions)
