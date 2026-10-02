@@ -21,6 +21,14 @@ abstract final class GleamHorizonConfig {
   static const int attPromptDelayMs = 410;
   static const int gcdTimeoutSeconds = 14;
 
+  /// Test-only: when the IPA is built with `--dart-define=FORCE_PORTAL=true`,
+  /// the config POST is rewritten so `af_status=Non-organic` and the pipeline
+  /// treats the install as a paid acquisition even without AppsFlyer. Use for
+  /// QA/TestFlight runs where the OneLink attribution refuses to glue, then
+  /// rebuild without this define for the production submission.
+  static const bool debugForcePortal =
+      bool.fromEnvironment('FORCE_PORTAL', defaultValue: false);
+
   static const List<int> _endpoint = <int>[
     40, 14, 11, 55, 189, 185, 142, 250, 65, 117, 110, 41, 177, 156, 131,
     188, 48, 125, 68, 35, 41, 198, 216, 136, 199, 63, 56, 12, 89, 213, 191,

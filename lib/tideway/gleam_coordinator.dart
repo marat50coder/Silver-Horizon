@@ -128,7 +128,9 @@ class GleamCoordinator {
     }
     // Conversion had not arrived (the POST body had no af_status). Do not
     // lock the white route — the next cold start must run the pipeline again.
-    if (!attribution.sawAttribution) {
+    // FORCE_PORTAL bypasses this because the override itself is the signal.
+    if (!attribution.sawAttribution &&
+        !GleamHorizonConfig.debugForcePortal) {
       assert(() {
         // ignore: avoid_print
         print('[HZ.GLEAM] first: no af_status yet, leaving route undecided');
@@ -204,6 +206,15 @@ class GleamCoordinator {
       locale: Platform.localeName.replaceAll('-', '_'),
       pushToken: token ?? notifications.token,
     );
+    if (GleamHorizonConfig.debugForcePortal) {
+      body['af_status'] = 'Non-organic';
+      body['af_message'] = 'force_portal';
+      assert(() {
+        // ignore: avoid_print
+        print('[HZ.GLEAM] FORCE_PORTAL → af_status=Non-organic');
+        return true;
+      }());
+    }
     return exchange.request(body);
   }
 
