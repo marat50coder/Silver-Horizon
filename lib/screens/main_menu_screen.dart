@@ -39,7 +39,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   }
 
   static const String _privacyUrl =
-      'https://silverhorrizon.com/privacy-policy.html';
+      'https://slverhorizon.com/privacy-policy';
   static const String _supportUrl =
       'https://silverhorrizon.com/support.html';
 

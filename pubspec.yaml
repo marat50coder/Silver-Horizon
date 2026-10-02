@@ -2,7 +2,7 @@ name: horizongame
 description: "Silver Horizon slot game."
 publish_to: 'none'
 
-version: 1.0.0+10
+version: 1.0.0+13
 
 environment:
   sdk: ^3.12.2
