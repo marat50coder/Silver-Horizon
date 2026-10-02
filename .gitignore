@@ -44,3 +44,8 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Rust build artefacts. The device static library is committed so
+# Codemagic can archive without installing cargo; rebuild and commit it
+# whenever rust/horizon_math/src changes.
+/rust/horizon_math/target/
+/ios/Rust/sim/*.a
