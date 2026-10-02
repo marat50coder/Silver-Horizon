@@ -44,5 +44,3 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Firebase iOS plist stays local — do not publish to a public repo.
-ios/Runner/GoogleService-Info.plist
