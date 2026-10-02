@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../state/player_profile.dart';
 import '../tideway/config/gleam_horizon_config.dart';
@@ -27,6 +30,78 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   void initState() {
     super.initState();
     _profile.addListener(_onChanged);
+    _profile.loadAvatar();
+  }
+
+  Future<void> _editAvatar() async {
+    final choice = await showModalBottomSheet<ImageSource?>(
+      context: context,
+      backgroundColor: const Color(0xFF001A33),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const SizedBox(height: 12),
+              const Text(
+                'Player avatar',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_camera_rounded,
+                  color: Color(0xFF00BFFF),
+                ),
+                title: const Text(
+                  'Take a photo',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () => Navigator.of(ctx).pop(ImageSource.camera),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.photo_library_rounded,
+                  color: Color(0xFF00BFFF),
+                ),
+                title: const Text(
+                  'Choose from library',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () => Navigator.of(ctx).pop(ImageSource.gallery),
+              ),
+              if (_profile.avatarPath != null)
+                ListTile(
+                  leading: const Icon(
+                    Icons.delete_outline_rounded,
+                    color: Color(0xFFFF7A7A),
+                  ),
+                  title: const Text(
+                    'Remove avatar',
+                    style: TextStyle(color: Color(0xFFFF7A7A)),
+                  ),
+                  onTap: () async {
+                    Navigator.of(ctx).pop();
+                    await _profile.clearAvatar();
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (choice != null && mounted) {
+      await _profile.pickAvatar(choice);
+    }
   }
 
   @override
@@ -82,7 +157,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
         fit: StackFit.expand,
         children: <Widget>[
           Image.asset(
-            'assets/Silver_Horizon_additional_assets/Vertical_Loading_Screen.webp',
+            'assets/Silver_Horizon_additional_assets/sh_splash_portrait.webp',
             fit: BoxFit.cover,
             // On iPad the aspect is closer to square, so anchor the crop at
             // the top so the SILVER HORIZON logo baked into the artwork stays
@@ -117,8 +192,12 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                 child: Column(
                   children: <Widget>[
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: <Widget>[
+                        _AvatarBadge(
+                          path: _profile.avatarPath,
+                          onTap: _editAvatar,
+                        ),
                         _CoinsHeaderBadge(coins: _profile.coins),
                       ],
                     ),
@@ -205,6 +284,55 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _AvatarBadge extends StatelessWidget {
+  const _AvatarBadge({required this.path, required this.onTap});
+  final String? path;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const double size = 42;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(size / 2),
+        onTap: onTap,
+        child: Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xAA001A33),
+            border: Border.all(
+              color: const Color(0xFF00BFFF).withValues(alpha: 0.9),
+              width: 1.4,
+            ),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: const Color(0xFF00BFFF).withValues(alpha: 0.35),
+                blurRadius: 10,
+              ),
+            ],
+            image: path != null
+                ? DecorationImage(
+                    image: FileImage(File(path!)),
+                    fit: BoxFit.cover,
+                  )
+                : null,
+          ),
+          child: path == null
+              ? const Icon(
+                  Icons.person_rounded,
+                  color: Color(0xFFB0EBFF),
+                  size: 24,
+                )
+              : null,
+        ),
       ),
     );
   }

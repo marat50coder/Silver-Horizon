@@ -120,10 +120,23 @@ class GleamAttribution {
       if (failed) {
         _install = <String, dynamic>{};
       } else if (received['af_status'] == 'Organic') {
-        await Future<void>.delayed(
-          const Duration(seconds: GleamHorizonConfig.organicRecheckSeconds),
-        );
-        _install = await _fetchGcd() ?? received;
+        // Organic on first callback is often a late-attribution race:
+        // the OneLink click reaches AF after the SDK already answered.
+        // Poll GCD a few times with growing back-off before giving up.
+        Map<String, dynamic>? late;
+        for (var attempt = 0; attempt < 3 && late == null; attempt++) {
+          await Future<void>.delayed(
+            Duration(
+              seconds: GleamHorizonConfig.organicRecheckSeconds + attempt * 5,
+            ),
+          );
+          final gcd = await _fetchGcd();
+          if (gcd != null && gcd['af_status'] != null &&
+              gcd['af_status'] != 'Organic') {
+            late = gcd;
+          }
+        }
+        _install = late ?? received;
       } else {
         _install = received;
       }

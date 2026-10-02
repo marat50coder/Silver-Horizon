@@ -184,8 +184,8 @@ class _LoadingScreenState extends State<LoadingScreen>
         builder: (BuildContext context, Orientation orientation) {
           final bool isPortrait = orientation == Orientation.portrait;
           final String bg = isPortrait
-              ? 'assets/Silver_Horizon_additional_assets/Vertical_Loading_Screen.webp'
-              : 'assets/Silver_Horizon_additional_assets/Horizontal_Loading_Screen.webp';
+              ? 'assets/Silver_Horizon_additional_assets/sh_splash_portrait.webp'
+              : 'assets/Silver_Horizon_additional_assets/sh_splash_landscape.webp';
 
           return Stack(
             fit: StackFit.expand,

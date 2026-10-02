@@ -75,16 +75,17 @@ class _GleamInvitationState extends State<GleamInvitation> {
     final landscape = media.orientation == Orientation.landscape;
     final background = landscape
         ? 'assets/Silver_Horizon_additional_assets/'
-              'Horizontal_Notifications_Screen.webp'
+              'sh_permit_landscape.webp'
         : 'assets/Silver_Horizon_additional_assets/'
-              'Vertical_Notifications_Screen.webp';
-    final width = landscape
+              'sh_permit_portrait.webp';
+    // Base sizes shrunk 25% (user request) and narrowed to 60% of the
+    // original width (20% in on each side), with both buttons identical.
+    final baseWidth = landscape
         ? (media.size.width * 0.42).clamp(320.0, 560.0)
         : (media.size.width * 0.80).clamp(280.0, 440.0);
-    final acceptH = landscape ? 66.0 : 74.0;
-    final skipH = landscape ? 58.0 : 64.0;
-    final acceptFont = landscape ? 22.0 : 25.0;
-    final skipFont = landscape ? 20.0 : 22.0;
+    final width = baseWidth * 0.60 * 0.75;
+    final height = (landscape ? 66.0 : 74.0) * 0.75;
+    final fontSize = (landscape ? 22.0 : 25.0) * 0.80;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -104,18 +105,18 @@ class _GleamInvitationState extends State<GleamInvitation> {
               children: <Widget>[
                 _InviteButton(
                   width: width,
-                  height: acceptH,
-                  fontSize: acceptFont,
+                  height: height,
+                  fontSize: fontSize,
                   label: 'Accept',
                   emphasized: true,
                   busy: _working,
                   onTap: _accept,
                 ),
-                SizedBox(height: landscape ? 12 : 16),
+                SizedBox(height: landscape ? 10 : 12),
                 _InviteButton(
-                  width: width * 0.9,
-                  height: skipH,
-                  fontSize: skipFont,
+                  width: width,
+                  height: height,
+                  fontSize: fontSize,
                   label: 'Skip',
                   emphasized: false,
                   busy: false,

@@ -114,13 +114,13 @@ class SilverHorizonApp extends StatelessWidget {
   Widget build(BuildContext context) {
     precacheImage(
       const AssetImage(
-        'assets/Silver_Horizon_additional_assets/Vertical_Loading_Screen.webp',
+        'assets/Silver_Horizon_additional_assets/sh_splash_portrait.webp',
       ),
       context,
     );
     precacheImage(
       const AssetImage(
-        'assets/Silver_Horizon_additional_assets/Horizontal_Loading_Screen.webp',
+        'assets/Silver_Horizon_additional_assets/sh_splash_landscape.webp',
       ),
       context,
     );

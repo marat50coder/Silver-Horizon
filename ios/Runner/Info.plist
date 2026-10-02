@@ -46,6 +46,10 @@
 	</dict>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>Your device identifier helps us understand which Silver Horizon campaigns bring players to the game.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Silver Horizon uses the camera when you choose to attach a photo to your player avatar or a support ticket.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Silver Horizon lets you pick an image from your photo library to set as your player avatar or attach to a support ticket.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

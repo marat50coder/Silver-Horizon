@@ -347,7 +347,7 @@ class _TopBar extends StatelessWidget {
               Expanded(
                 child: Center(
                   child: Image.asset(
-                    'assets/Silver_Horizon_additional_assets/Game_name.webp',
+                    'assets/Silver_Horizon_additional_assets/sh_wordmark.webp',
                     height: 72,
                     fit: BoxFit.contain,
                   ),

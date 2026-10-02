@@ -1,4 +1,9 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'achievements.dart';
 
@@ -8,6 +13,64 @@ import 'achievements.dart';
 class PlayerProfile extends ChangeNotifier {
   PlayerProfile._();
   static final PlayerProfile instance = PlayerProfile._();
+
+  // ---------- Avatar ----------
+  // Players can set a profile avatar from the camera or photo library.
+  // Persisted as an absolute file path in SharedPreferences so it survives
+  // relaunches.
+  static const String _avatarPrefKey = 'sh.player.avatar.path';
+  final ImagePicker _picker = ImagePicker();
+  String? _avatarPath;
+  bool _avatarLoaded = false;
+
+  String? get avatarPath => _avatarPath;
+
+  Future<void> loadAvatar() async {
+    if (_avatarLoaded) return;
+    _avatarLoaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final stored = prefs.getString(_avatarPrefKey);
+      if (stored != null && stored.isNotEmpty && File(stored).existsSync()) {
+        _avatarPath = stored;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  /// Opens the system picker and stores the chosen image inside the app's
+  /// documents directory. `source` is either [ImageSource.camera] or
+  /// [ImageSource.gallery]. Returns `true` if the avatar changed.
+  Future<bool> pickAvatar(ImageSource source) async {
+    try {
+      final picked = await _picker.pickImage(
+        source: source,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (picked == null) return false;
+      final dir = await getApplicationDocumentsDirectory();
+      final target = File('${dir.path}/player_avatar.jpg');
+      await File(picked.path).copy(target.path);
+      _avatarPath = target.path;
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_avatarPrefKey, target.path);
+      notifyListeners();
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> clearAvatar() async {
+    _avatarPath = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_avatarPrefKey);
+    } catch (_) {}
+    notifyListeners();
+  }
 
   // ---------- Wallet ----------
   int _coins = 1000;
