@@ -2,7 +2,7 @@ name: horizongame
 description: "Silver Horizon — portrait iOS slot with wilds, scatter bonus wheel, free spins, daily rewards and achievements."
 publish_to: 'none'
 
-version: 1.0.1+6
+version: 1.0.1+7
 
 environment:
   sdk: ^3.12.2

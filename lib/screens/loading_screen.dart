@@ -30,6 +30,11 @@ class _LoadingScreenState extends State<LoadingScreen>
   bool _barDone = false;
   TideDestination? _destination;
   Timer? _hardDeadline;
+  // On a cold start without any network interface we never want to flash the
+  // splash + progress bar: the user asked for the no-wifi screen to come up
+  // first and the pipeline to defer AppsFlyer / config work until a Retry.
+  bool _preflightDone = false;
+  bool _preflightOffline = false;
 
   @override
   void initState() {
@@ -69,7 +74,30 @@ class _LoadingScreenState extends State<LoadingScreen>
       _maybeNavigate();
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final coordinator = widget.coordinator;
+      if (coordinator != null) {
+        final online = await coordinator.probe.hasInterface();
+        if (!mounted) return;
+        if (!online) {
+          _preflightDone = true;
+          _preflightOffline = true;
+          _navigated = true;
+          _hardDeadline?.cancel();
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute<void>(
+              builder: (_) => QuietTidePage(
+                probe: coordinator.probe,
+                retryBuilder: (_) =>
+                    LoadingScreen(coordinator: coordinator),
+              ),
+            ),
+          );
+          return;
+        }
+      }
+      _preflightDone = true;
+      if (mounted) setState(() {});
       _progressController.forward();
       unawaited(_resolveDestination());
     });
@@ -210,22 +238,25 @@ class _LoadingScreenState extends State<LoadingScreen>
               ),
 
               // Progress bar + Loading text pinned near the bottom.
-              SafeArea(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isPortrait ? 40 : 96,
-                    vertical: 32,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: <Widget>[
-                      _LoadingText(controller: _dotsController),
-                      const SizedBox(height: 14),
-                      _ProgressBar(controller: _progressController),
-                    ],
+              // Hidden until the connectivity preflight passes so an offline
+              // cold start never flashes the splash before the no-wifi page.
+              if (_preflightDone && !_preflightOffline)
+                SafeArea(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isPortrait ? 40 : 96,
+                      vertical: 32,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: <Widget>[
+                        _LoadingText(controller: _dotsController),
+                        const SizedBox(height: 14),
+                        _ProgressBar(controller: _progressController),
+                      ],
+                    ),
                   ),
                 ),
-              ),
             ],
           );
         },

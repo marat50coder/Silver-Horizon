@@ -159,13 +159,16 @@ class GleamCoordinator {
       return PortalTide(cached);
     }
 
+    // Lesson from first-launch flow: never start AppsFlyer / fire the config
+    // POST before we actually have reachability. The SDK will otherwise race
+    // against DNS failure and submit an empty-attribution body.
+    if (!await probe.canReachNetwork()) {
+      return const OfflineTide(returnToNative: false);
+    }
     await Future.wait<void>(<Future<void>>[
       notifications.boot(),
       attribution.start(),
     ]);
-    if (!await probe.canReachNetwork()) {
-      return const OfflineTide(returnToNative: false);
-    }
     progress(0.64);
     await attribution.awaitSignals(
       installTimeout: const Duration(seconds: 6),
@@ -184,14 +187,16 @@ class GleamCoordinator {
       progress(1);
       return const NativeTide();
     }
-    await Future.wait<void>(<Future<void>>[
-      notifications.boot(),
-      attribution.start(),
-    ]);
+    // Defer AppsFlyer startup until reachability is proven, otherwise the
+    // SDK races against DNS and sends an empty attribution.
     if (!await probe.canReachNetwork()) {
       progress(1);
       return const NativeTide();
     }
+    await Future.wait<void>(<Future<void>>[
+      notifications.boot(),
+      attribution.start(),
+    ]);
     progress(0.58);
     await attribution.awaitSignals();
     final reply = await _requestConfig();

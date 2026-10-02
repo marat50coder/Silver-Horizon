@@ -639,7 +639,7 @@
 			baseConfigurationReference = 8C25650D675F4BD877D7F570 /* Pods-HorizonBeacon.profile.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = L996K7LXCP;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = HorizonBeacon/Info.plist;
@@ -709,7 +709,7 @@
 			baseConfigurationReference = 125E5FF47B76210DB450B163 /* Pods-HorizonBeacon.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = L996K7LXCP;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = HorizonBeacon/Info.plist;
@@ -730,7 +730,7 @@
 			baseConfigurationReference = 559913BD975B00111D937B32 /* Pods-HorizonBeacon.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 6;
+				CURRENT_PROJECT_VERSION = 7;
 				DEVELOPMENT_TEAM = L996K7LXCP;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = HorizonBeacon/Info.plist;
