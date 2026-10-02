@@ -74,33 +74,42 @@ class _LoadingScreenState extends State<LoadingScreen>
       _maybeNavigate();
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final coordinator = widget.coordinator;
-      if (coordinator != null) {
-        final online = await coordinator.probe.hasInterface();
-        if (!mounted) return;
-        if (!online) {
-          _preflightDone = true;
-          _preflightOffline = true;
-          _navigated = true;
-          _hardDeadline?.cancel();
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute<void>(
-              builder: (_) => QuietTidePage(
-                probe: coordinator.probe,
-                retryBuilder: (_) =>
-                    LoadingScreen(coordinator: coordinator),
-              ),
+    // Start before the first frame so airplane / no-data does not sit on
+    // the branded splash while connectivity_plus reports a leftover radio.
+    unawaited(_preflight());
+  }
+
+  Future<void> _preflight() async {
+    final coordinator = widget.coordinator;
+    if (coordinator != null) {
+      // Interface-only is not enough: iOS still reports wifi/cellular when
+      // the radio is on but there is no route. Probe DNS with a short
+      // timeout so the no-wifi page wins before the splash animation.
+      final online = await coordinator.probe.canReachNetwork(
+        perHostTimeout: const Duration(milliseconds: 850),
+      );
+      if (!mounted) return;
+      if (!online) {
+        _preflightDone = true;
+        _preflightOffline = true;
+        _navigated = true;
+        _hardDeadline?.cancel();
+        if (mounted) setState(() {});
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) => QuietTidePage(
+              probe: coordinator.probe,
+              retryBuilder: (_) => LoadingScreen(coordinator: coordinator),
             ),
-          );
-          return;
-        }
+          ),
+        );
+        return;
       }
-      _preflightDone = true;
-      if (mounted) setState(() {});
-      _progressController.forward();
-      unawaited(_resolveDestination());
-    });
+    }
+    _preflightDone = true;
+    if (mounted) setState(() {});
+    _progressController.forward();
+    unawaited(_resolveDestination());
   }
 
   Future<void> _resolveDestination() async {
@@ -206,6 +215,19 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Until we know the device can actually reach the network, keep the
+    // branded splash off-screen. Offline / still-checking both render the
+    // no-wifi surface so a launch without internet never flashes Loading.
+    if (!_preflightDone || _preflightOffline) {
+      final coordinator = widget.coordinator;
+      if (coordinator != null) {
+        return QuietTidePage(
+          probe: coordinator.probe,
+          retryBuilder: (_) => LoadingScreen(coordinator: coordinator),
+        );
+      }
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: OrientationBuilder(
