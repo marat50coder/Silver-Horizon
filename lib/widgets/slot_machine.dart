@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../math/horizon_ffi.dart' as rust;
 import '../models/payline.dart';
 import '../models/slot_symbol.dart';
 import 'payline_overlay.dart';
@@ -42,8 +43,6 @@ class SlotMachineState extends State<SlotMachine>
   static const int reelCount = 5;
   static const int rowCount = 3;
 
-  final math.Random _random = math.Random();
-
   /// Symbols currently visible in each reel column (top → bottom).
   late List<List<SlotSymbol>> _visible;
 
@@ -79,7 +78,7 @@ class SlotMachineState extends State<SlotMachine>
 
     _visible = List<List<SlotSymbol>>.generate(
       reelCount,
-      (_) => List<SlotSymbol>.generate(rowCount, (_) => _randomSymbol()),
+      (_) => List<SlotSymbol>.generate(rowCount, (_) => _pickWeighted()),
     );
 
     _controllers = List<AnimationController>.generate(
@@ -99,31 +98,9 @@ class SlotMachineState extends State<SlotMachine>
     super.dispose();
   }
 
-  SlotSymbol _randomSymbol() {
-    // Weighted picking: less rare = higher weight.
-    final int total = SlotSymbol.values.fold<int>(
-      0,
-      (int sum, SlotSymbol s) => sum + s.weight,
-    );
-    int r = _random.nextInt(total);
-    for (final SlotSymbol s in SlotSymbol.values) {
-      r -= s.weight;
-      if (r < 0) return s;
-    }
-    return SlotSymbol.cherry;
-  }
-
-  /// Symbols that can actually pay on a line (no wilds / scatter).
-  static const List<SlotSymbol> _payingSymbols = <SlotSymbol>[
-    SlotSymbol.cherry,
-    SlotSymbol.grape,
-    SlotSymbol.watermelon,
-    SlotSymbol.clever,
-    SlotSymbol.bell,
-    SlotSymbol.star,
-    SlotSymbol.diamond,
-    SlotSymbol.crown,
-  ];
+  /// Weighted single-symbol draw. Thin wrapper over the Rust pick so the
+  /// visual spin-blur filler uses the same distribution as the real reels.
+  SlotSymbol _pickWeighted() => SlotSymbol.fromIndex(rust.hxPickWeighted());
 
   /// Spin all reels and return line win + scatter data.
   Future<SpinResult> spin({required int bet}) async {
@@ -132,29 +109,44 @@ class SlotMachineState extends State<SlotMachine>
     _scatterHighlight = <(int, int)>[];
     _showScatterConnect = false;
 
-    // Pre-decide the final visible grid (5 columns × 3 rows) with the
-    // regular weighted table — no demo / hot-streak bias.
+    // All math (grid generation with the at-most-one-scatter-per-reel
+    // cap AND payline evaluation) runs in the Rust `horizon_math`
+    // static library. We just read back the resulting grid + line wins
+    // + scatter list via cheap integer FFI calls.
+    rust.hxSpin(bet);
+
     final List<List<SlotSymbol>> finalGrid = List<List<SlotSymbol>>.generate(
       reelCount,
-      (_) => List<SlotSymbol>.generate(rowCount, (_) => _randomSymbol()),
+      (int c) => List<SlotSymbol>.generate(
+        rowCount,
+        (int r) => SlotSymbol.fromIndex(rust.hxLastGridAt(c, r)),
+      ),
     );
 
-    // Enforce "at most one scatter per reel" so bonus builds up gracefully
-    // column-by-column rather than dropping 2+ scatters on a single reel.
-    _limitScattersPerReel(finalGrid);
+    // Scatter positions decoded from Rust's packed (col<<8 | row).
+    final int scatterCount = rust.hxLastScatterCount();
+    final List<(int, int)> finalScatters = <(int, int)>[
+      for (int i = 0; i < scatterCount; i++)
+        _unpackScatter(rust.hxLastScatterPacked(i)),
+    ];
+    final List<bool> reelHasScatter = <bool>[
+      for (int c = 0; c < reelCount; c++)
+        finalScatters.any(((int, int) p) => p.$1 == c),
+    ];
 
-    // Build strips per reel: [current visible + filler + final]. Any scatter
-    // that would appear in the middle of the strip on a reel that ends with
-    // a scatter is filtered out to keep the "max one per reel" rule intact
-    // during the visible spin animation as well.
+    // Build strips per reel: [current visible + filler + final]. The
+    // filler is purely cosmetic ("blur" during the spin animation); we
+    // still draw it from the Rust weighted pick so the running symbols
+    // match the real distribution. Scatters are filtered out on reels
+    // that already end with a scatter so the eye never sees two on a
+    // single column during the slow-stop.
     const int fillerLength = 24;
     for (int col = 0; col < reelCount; col++) {
-      final bool colHasScatter =
-          finalGrid[col].any((SlotSymbol s) => s.isScatter);
+      final bool colHasScatter = reelHasScatter[col];
       final List<SlotSymbol> strip = <SlotSymbol>[];
       strip.addAll(_visible[col]);
       for (int i = 0; i < fillerLength; i++) {
-        SlotSymbol s = _randomSymbol();
+        SlotSymbol s = _pickWeighted();
         if (s.isScatter && colHasScatter) {
           s = SlotSymbol.cherry;
         }
@@ -163,17 +155,6 @@ class SlotMachineState extends State<SlotMachine>
       strip.addAll(finalGrid[col]);
       _strips[col] = strip;
     }
-
-    // Scatter data for the final grid.
-    final List<(int, int)> finalScatters = <(int, int)>[
-      for (int c = 0; c < reelCount; c++)
-        for (int r = 0; r < rowCount; r++)
-          if (finalGrid[c][r].isScatter) (c, r),
-    ];
-    final List<bool> reelHasScatter = <bool>[
-      for (int c = 0; c < reelCount; c++)
-        finalGrid[c].any((SlotSymbol s) => s.isScatter),
-    ];
 
     // Hold every reel on the start of its strip (current visible symbols)
     // so waiting columns stay frozen until their own turn.
@@ -240,12 +221,21 @@ class SlotMachineState extends State<SlotMachine>
       setState(() => _showScatterConnect = false);
     }
 
-    // Evaluate wins across all 10 paylines.
-    final List<LineWin> wins = _evaluate(finalGrid, bet);
-    int total = 0;
+    // Payline evaluation already ran inside `hx_spin`. Read the resulting
+    // line-wins back out of Rust-owned storage via dedicated accessors.
+    final int lineCount = rust.hxLastLineCount();
+    final List<LineWin> wins = <LineWin>[
+      for (int i = 0; i < lineCount; i++)
+        LineWin(
+          paylineIndex: rust.hxLastLinePayline(i),
+          symbol: SlotSymbol.fromIndex(rust.hxLastLineSymbol(i)),
+          matchCount: rust.hxLastLineMatchCount(i),
+          amount: rust.hxLastLineAmount(i),
+        ),
+    ];
+    final int total = rust.hxLastTotal();
     final Set<(int, int)> cells = <(int, int)>{};
     for (final LineWin w in wins) {
-      total += w.amount;
       for (int c = 0; c < w.matchCount; c++) {
         cells.add((c, w.payline.rows[c]));
       }
@@ -344,20 +334,8 @@ class SlotMachineState extends State<SlotMachine>
     controller.removeStatusListener(onStatus);
   }
 
-  void _limitScattersPerReel(List<List<SlotSymbol>> grid) {
-    for (int c = 0; c < reelCount; c++) {
-      bool seen = false;
-      for (int r = 0; r < rowCount; r++) {
-        if (grid[c][r].isScatter) {
-          if (seen) {
-            grid[c][r] = _payingSymbols[_random.nextInt(_payingSymbols.length)];
-          } else {
-            seen = true;
-          }
-        }
-      }
-    }
-  }
+  /// Decodes Rust's (col<<8 | row) packed scatter position.
+  (int, int) _unpackScatter(int packed) => (packed >> 8, packed & 0xFF);
 
   /// Number of winning lines from the most recent spin.
   int get winCount => _winningLines.length;
@@ -381,67 +359,10 @@ class SlotMachineState extends State<SlotMachine>
     });
   }
 
-  List<LineWin> _evaluate(List<List<SlotSymbol>> grid, int bet) {
-    final List<LineWin> wins = <LineWin>[];
-
-    for (int p = 0; p < kPaylines.length; p++) {
-      final Payline line = kPaylines[p];
-      final List<SlotSymbol> lineSymbols = <SlotSymbol>[
-        for (int c = 0; c < reelCount; c++) grid[c][line.rows[c]],
-      ];
-
-      // Scatter never counts on paylines.
-      if (lineSymbols.first.isScatter) continue;
-
-      // Determine the base symbol: first non-wild tile from the left. If all
-      // leading tiles are wild we still count as a wild-only run.
-      SlotSymbol? base;
-      for (final SlotSymbol s in lineSymbols) {
-        if (s.isScatter) break;
-        if (!s.isWild) {
-          base = s;
-          break;
-        }
-      }
-
-      int matchCount = 0;
-      for (int c = 0; c < reelCount; c++) {
-        final SlotSymbol s = lineSymbols[c];
-        if (s.isScatter) break;
-        if (base == null) {
-          // All wilds so far; keep counting as long as they're wild.
-          if (s.isWild) {
-            matchCount++;
-          } else {
-            break;
-          }
-        } else {
-          if (s == base || s.isWild) {
-            matchCount++;
-          } else {
-            break;
-          }
-        }
-      }
-
-      if (matchCount >= 3) {
-        // Pick the highest-paying symbol to price the line: base (a real
-        // symbol) or wild if the whole run was wild.
-        final SlotSymbol paySymbol = base ?? SlotSymbol.wild;
-        final int amount = paySymbol.payout(matchCount) * bet;
-        if (amount > 0) {
-          wins.add(LineWin(
-            paylineIndex: p,
-            symbol: paySymbol,
-            matchCount: matchCount,
-            amount: amount,
-          ));
-        }
-      }
-    }
-
-    return wins;
-  }
+  // Note: payline evaluation lives in `rust/horizon_math/src/slot.rs`
+  // (`evaluate_lines`). The old Dart `_evaluate` method was removed
+  // during the math migration — reach it through `rust.hxSpin` +
+  // `rust.hxLastLine*` queries.
 
   @override
   Widget build(BuildContext context) {
