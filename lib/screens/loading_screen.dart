@@ -3,13 +3,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../tideway/core/gleam_models.dart';
+import '../tideway/gleam_coordinator.dart';
+import '../tideway/pages/gleam_invitation.dart';
+import '../tideway/pages/horizon_portal.dart';
+import '../tideway/pages/quiet_tide_page.dart';
 import 'main_menu_screen.dart';
 
 /// Loading screen that supports both portrait and landscape orientations.
-/// A horizontal progress bar fills from left to right and reaches 100% only
-/// at the very moment right before the game screen is launched.
+/// Plays the branded splash while [GleamCoordinator.decide] resolves the
+/// first destination, then routes to the native menu, portal, or offline page.
 class LoadingScreen extends StatefulWidget {
-  const LoadingScreen({super.key});
+  const LoadingScreen({super.key, this.coordinator});
+
+  final GleamCoordinator? coordinator;
 
   @override
   State<LoadingScreen> createState() => _LoadingScreenState();
@@ -20,58 +27,150 @@ class _LoadingScreenState extends State<LoadingScreen>
   late final AnimationController _progressController;
   late final AnimationController _dotsController;
   bool _navigated = false;
+  bool _barDone = false;
+  TideDestination? _destination;
+  Timer? _hardDeadline;
 
   @override
   void initState() {
     super.initState();
 
-    // Progress animation: total loading duration is 4.5s. We ease the curve so
-    // the bar takes its time in the middle and completes only right before
-    // navigation, giving a satisfying "final push" feel.
     _progressController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 4500),
     );
 
-    // Dots animation cycles Loading. -> Loading.. -> Loading... every 500ms.
     _dotsController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
 
     _progressController.addStatusListener((AnimationStatus status) {
-      if (status == AnimationStatus.completed && !_navigated) {
-        _navigated = true;
-        // Small delay so the user can see the fully-filled bar for a beat.
-        Future<void>.delayed(const Duration(milliseconds: 250), _goToGame);
+      if (status == AnimationStatus.completed) {
+        _barDone = true;
+        _maybeNavigate();
       }
     });
 
-    // Kick things off after the first frame so the screen is painted first.
+    // Lesson #25 floor: a dead-end offline verdict that takes the full splash
+    // to admit it feels broken. If the destination resolves to offline before
+    // the bar finishes, release the splash after ~0.75s instead of 4.5s.
+    Timer(const Duration(milliseconds: 750), () {
+      if (!mounted || _navigated) return;
+      if (_destination is OfflineTide) {
+        _barDone = true;
+        _maybeNavigate();
+      }
+    });
+
+    _hardDeadline = Timer(const Duration(seconds: 11), () {
+      _barDone = true;
+      _destination ??= const NativeTide();
+      _maybeNavigate();
+    });
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _progressController.forward();
+      unawaited(_resolveDestination());
     });
   }
 
-  Future<void> _goToGame() async {
-    // Lock to portrait BEFORE we build the menu/game so it starts vertical.
-    await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
-      DeviceOrientation.portraitUp,
-    ]);
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      PageRouteBuilder<void>(
-        transitionDuration: const Duration(milliseconds: 550),
-        pageBuilder: (_, _, _) => const MainMenuScreen(),
-        transitionsBuilder: (_, Animation<double> anim, _, Widget child) {
-          return FadeTransition(opacity: anim, child: child);
+  Future<void> _resolveDestination() async {
+    final coordinator = widget.coordinator;
+    if (coordinator == null) {
+      _destination = const NativeTide();
+      _maybeNavigate();
+      return;
+    }
+    try {
+      _destination = await coordinator.decide(
+        onProgress: (value) {
+          if (!mounted) return;
+          if (value > _progressController.value) {
+            _progressController.value = value.clamp(0.0, 1.0);
+          }
         },
-      ),
-    );
+      );
+    } catch (_) {
+      _destination = const NativeTide();
+    }
+    _maybeNavigate();
+  }
+
+  Future<void> _maybeNavigate() async {
+    if (_navigated || !_barDone || _destination == null) return;
+    _navigated = true;
+    _hardDeadline?.cancel();
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
+    await _openDestination(_destination!);
+  }
+
+  Future<void> _openDestination(TideDestination destination) async {
+    final coordinator = widget.coordinator;
+
+    if (destination is NativeTide || coordinator == null) {
+      await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
+        DeviceOrientation.portraitUp,
+      ]);
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        PageRouteBuilder<void>(
+          transitionDuration: const Duration(milliseconds: 550),
+          pageBuilder: (_, _, _) => const MainMenuScreen(),
+          transitionsBuilder: (_, Animation<double> anim, _, Widget child) {
+            return FadeTransition(opacity: anim, child: child);
+          },
+        ),
+      );
+      return;
+    }
+
+    if (destination is OfflineTide) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => QuietTidePage(
+            probe: coordinator.probe,
+            retryBuilder: (_) => LoadingScreen(coordinator: coordinator),
+          ),
+        ),
+      );
+      return;
+    }
+
+    if (destination is PortalTide) {
+      Widget portalBuilder(BuildContext _) => HorizonPortal(
+        url: destination.url,
+        coldLaunch: destination.coldLaunch,
+        vault: coordinator.vault,
+        probe: coordinator.probe,
+        notifications: coordinator.notifications,
+        agent: coordinator.agent,
+      );
+
+      if (coordinator.vault.shouldShowPushInvite &&
+          await coordinator.notifications.canOfferPermission()) {
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(
+            builder: (_) => GleamInvitation(
+              vault: coordinator.vault,
+              notifications: coordinator.notifications,
+              nextBuilder: portalBuilder,
+            ),
+          ),
+        );
+      } else if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute<void>(builder: portalBuilder),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
+    _hardDeadline?.cancel();
     _progressController.dispose();
     _dotsController.dispose();
     super.dispose();

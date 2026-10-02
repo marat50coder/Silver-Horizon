@@ -1,0 +1,224 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../infra/signal_reach.dart';
+
+class QuietTidePage extends StatefulWidget {
+  const QuietTidePage({
+    super.key,
+    required this.probe,
+    required this.retryBuilder,
+  });
+
+  final SignalReach probe;
+  final WidgetBuilder retryBuilder;
+
+  @override
+  State<QuietTidePage> createState() => _QuietTidePageState();
+}
+
+class _QuietTidePageState extends State<QuietTidePage> {
+  bool _checking = false;
+  bool _stillOffline = false;
+
+  @override
+  void initState() {
+    super.initState();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setPreferredOrientations(const <DeviceOrientation>[
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  Future<void> _retry() async {
+    if (_checking) return;
+    HapticFeedback.lightImpact();
+    setState(() {
+      _checking = true;
+      _stillOffline = false;
+    });
+    bool online = false;
+    try {
+      online = await widget.probe.canReachNetwork();
+    } catch (_) {
+      online = false;
+    }
+    if (!mounted) return;
+    if (online) {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(builder: widget.retryBuilder),
+      );
+      return;
+    }
+    setState(() {
+      _checking = false;
+      _stillOffline = true;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final landscape = media.orientation == Orientation.landscape;
+    final width = landscape
+        ? (media.size.width * 0.40).clamp(300.0, 520.0)
+        : (media.size.width * 0.66).clamp(260.0, 420.0);
+    final height = landscape ? 70.0 : 74.0;
+
+    return Scaffold(
+      body: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: <Color>[
+              Color(0xFF001428),
+              Color(0xFF003C6E),
+              Color(0xFF001018),
+            ],
+            stops: <double>[0.0, 0.48, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: landscape ? 48 : 28,
+              vertical: landscape ? 20 : 32,
+            ),
+            child: Column(
+              children: <Widget>[
+                const Spacer(flex: 3),
+                const Text(
+                  'NO INTERNET CONNECTION',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFFE8F7FF),
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.4,
+                    height: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Check your connection and try again',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFFB0EBFF),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                  ),
+                ),
+                const Spacer(flex: 2),
+                _RetryButton(
+                  width: width,
+                  height: height,
+                  busy: _checking,
+                  onTap: _retry,
+                ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 180),
+                  child: _stillOffline
+                      ? const Padding(
+                          padding: EdgeInsets.only(top: 12),
+                          child: Text(
+                            'Still offline',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+                const Spacer(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RetryButton extends StatelessWidget {
+  const _RetryButton({
+    required this.width,
+    required this.height,
+    required this.busy,
+    required this.onTap,
+  });
+
+  final double width;
+  final double height;
+  final bool busy;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: height,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(34),
+          gradient: const LinearGradient(
+            colors: <Color>[Color(0xFF00BFFF), Color(0xFF005AA8)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+          border: Border.all(color: const Color(0xFF0A2A44), width: 3),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Colors.black45,
+              blurRadius: 12,
+              offset: Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(34),
+            onTap: busy ? null : onTap,
+            child: Center(
+              child: busy
+                  ? const SizedBox.square(
+                      dimension: 28,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.8,
+                        color: Color(0xFFE8F7FF),
+                      ),
+                    )
+                  : const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(
+                          Icons.refresh_rounded,
+                          color: Color(0xFFE8F7FF),
+                          size: 28,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Retry',
+                          style: TextStyle(
+                            color: Color(0xFFE8F7FF),
+                            fontSize: 23,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.8,
+                            height: 1.0,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

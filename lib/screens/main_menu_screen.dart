@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../state/player_profile.dart';
+import '../tideway/config/gleam_horizon_config.dart';
 import '../widgets/app_layout.dart';
 import 'achievements_screen.dart';
 import 'daily_bonus_screen.dart';
@@ -38,10 +39,8 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
     if (mounted) setState(() {});
   }
 
-  static const String _privacyUrl =
-      'https://silverhorrizon.com/privacy-policy.html';
-  static const String _supportUrl =
-      'https://silverhorrizon.com/support.html';
+  static const String _privacyUrl = GleamHorizonConfig.privacyUrl;
+  static const String _supportUrl = GleamHorizonConfig.supportUrl;
 
   void _openWebView(
     String title,

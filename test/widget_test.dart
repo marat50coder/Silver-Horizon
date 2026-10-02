@@ -1,4 +1,4 @@
-// Basic smoke test for the Silver Horizon app.
+// Smoke test for the Silver Horizon app.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -8,5 +8,10 @@ void main() {
   testWidgets('App builds without crashing', (WidgetTester tester) async {
     await tester.pumpWidget(const SilverHorizonApp());
     expect(find.byType(MaterialApp), findsOneWidget);
+    // Drain the splash timers so the test does not leak a pending Timer.
+    await tester.pump(const Duration(seconds: 12));
+    // Tear the tree down ourselves — the loading dot animation repeats
+    // forever and pumpAndSettle would never return otherwise.
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
