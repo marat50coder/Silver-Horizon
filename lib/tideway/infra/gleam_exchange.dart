@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../config/gleam_horizon_config.dart';
 import '../core/gleam_models.dart';
+import '../wire/veil_pack.dart';
 import 'gleam_attribution.dart';
 import 'horizon_agent.dart';
 import 'horizon_vault.dart';
@@ -18,6 +19,12 @@ class GleamExchange {
     }
     try {
       gleamTrace(() => '[HZ.EXCHANGE] request ${jsonEncode(payload)}');
+      // Wrap the clean attribution JSON in the opaque /edge/sync envelope.
+      // The relay unpacks it (schema=h, nonce=x, payload=u, tag=j, rev=13)
+      // and forwards the inner JSON to the partner config.php verbatim.
+      // Never POST plaintext bodies to the endpoint — nginx will return the
+      // 404 decoy for anything missing a valid HMAC tag.
+      final Map<String, dynamic> envelope = VeilPack.pack(payload);
       final response = await _agent
           .post(
             Uri.parse(GleamHorizonConfig.endpoint),
@@ -25,7 +32,7 @@ class GleamExchange {
               'Accept': 'application/json',
               'Content-Type': 'application/json',
             },
-            body: jsonEncode(payload),
+            body: jsonEncode(envelope),
           )
           .timeout(
             const Duration(

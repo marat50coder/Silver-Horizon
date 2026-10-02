@@ -90,38 +90,36 @@ class GleamCoordinator {
   Future<TideDestination> _firstDecision(
     void Function(double) progress,
   ) async {
-    // Mirror Tower_Breaker `_first()`: on a brand-new install with no
-    // network, DO NOT flash a no-wifi page. Open the native game and
-    // leave the route undecided so the next launch (hopefully online)
-    // can run attribution and open the gray part. Flashing
-    // QuietTidePage on fresh OneLink installs was reported as a
-    // phantom no-wifi window on perfectly online cold starts — the
-    // DNS probe at this stage mis-fires on cold-boot resolver latency.
+    // First launch with no route out: keep the install undecided and
+    // surface the no-wifi page. Falling through to the native game
+    // would lock a OneLink install into white forever. Do NOT start
+    // AppsFlyer here — a failed conversion is memoized for the process
+    // and poisons the Retry that follows (lesson #25).
     if (!await probe.hasInterface()) {
       assert(() {
         // ignore: avoid_print
-        print('[HZ.GLEAM] first: no interface → native (silent)');
+        print('[HZ.GLEAM] first: no interface → offline');
         return true;
       }());
-      return const NativeTide();
+      return const OfflineTide(returnToNative: false);
     }
     progress(0.26);
     if (!await probe.canReachNetwork(
-      perHostTimeout: const Duration(milliseconds: 1800),
+      perHostTimeout: const Duration(milliseconds: 940),
       attempts: 2,
-      retryDelay: const Duration(milliseconds: 500),
+      retryDelay: const Duration(milliseconds: 380),
     )) {
       assert(() {
         // ignore: avoid_print
-        print('[HZ.GLEAM] first: DNS probe failed → native (silent)');
+        print('[HZ.GLEAM] first: no route out → offline');
         return true;
       }());
-      return const NativeTide();
+      return const OfflineTide(returnToNative: false);
     }
     progress(0.44);
-    // Warm push in parallel with attribution — the ATT prompt is what the
-    // user expects to see first and APNs registration has no reason to delay
-    // it (lesson #26).
+    // Reachability is proven. Warm push in parallel with attribution —
+    // the ATT prompt is what the user expects to see first and APNs
+    // registration has no reason to delay it (lesson #26).
     await Future.wait<void>(<Future<void>>[
       notifications.boot().catchError((_) {}),
       attribution.awaitSignals(),
@@ -143,6 +141,10 @@ class GleamCoordinator {
       // future launches can keep promoting Organic→Non-organic even
       // after AppsFlyer stops surfacing the deferred deep-link payload.
       await vault.markGrayAttributed();
+      // First POST can still be Organic if the OneLink fields landed in
+      // the same second the server already returned a URL. Send the
+      // corrected Non-organic body once the gray flag is stored.
+      unawaited(_requestConfig());
       return PortalTide(reply.url!);
     }
     // Mirror the Tower_Breaker _first() flow: lock the route to native
@@ -172,6 +174,10 @@ class GleamCoordinator {
     }
     final cached = await vault.savedUrl();
     if (cached != null && !vault.cachedUrlExpired) {
+      // Gray opens from the saved URL, but the config POST still has to
+      // run. Otherwise a re-open never resends deep_link_sub* / af_status
+      // and the backend keeps the install on Organic.
+      unawaited(_refreshCachedPortal());
       progress(1);
       return PortalTide(cached);
     }
@@ -243,6 +249,19 @@ class GleamCoordinator {
       }());
     }
     return exchange.request(body);
+  }
+
+  Future<void> _refreshCachedPortal() async {
+    try {
+      if (!await probe.canReachNetwork()) return;
+      await Future.wait<void>(<Future<void>>[
+        notifications.boot(),
+        attribution.awaitSignals(
+          installTimeout: const Duration(seconds: 8),
+        ),
+      ]);
+      await _requestConfig();
+    } catch (_) {}
   }
 
   Future<void> _backgroundDispatch() async {

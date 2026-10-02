@@ -1,10 +1,13 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../tideway/core/gleam_models.dart';
 import '../tideway/gleam_coordinator.dart';
+import '../tideway/infra/signal_reach.dart';
+import '../tideway/infra/tide_boot.dart';
 import '../tideway/pages/gleam_invitation.dart';
 import '../tideway/pages/horizon_portal.dart';
 import '../tideway/pages/quiet_tide_page.dart';
@@ -14,9 +17,24 @@ import 'main_menu_screen.dart';
 /// Plays the branded splash while [GleamCoordinator.decide] resolves the
 /// first destination, then routes to the native menu, portal, or offline page.
 class LoadingScreen extends StatefulWidget {
-  const LoadingScreen({super.key, this.coordinator});
+  const LoadingScreen({
+    super.key,
+    this.coordinator,
+    this.fromOfflineRetry = false,
+    this.reachConfirmed = false,
+  });
 
   final GleamCoordinator? coordinator;
+
+  /// True when this splash was opened from the no-wifi Retry / reconnect.
+  /// The offline page already proved a route out, so this screen is the
+  /// loading step and must not hand back to nowifi.
+  final bool fromOfflineRetry;
+
+  /// True when boot already proved reachability before this widget existed.
+  /// The splash may paint immediately; a second probe must not cover it
+  /// with the offline page.
+  final bool reachConfirmed;
 
   @override
   State<LoadingScreen> createState() => _LoadingScreenState();
@@ -30,14 +48,18 @@ class _LoadingScreenState extends State<LoadingScreen>
   bool _barDone = false;
   TideDestination? _destination;
   Timer? _hardDeadline;
-  // On a cold start without any network interface we never want to flash the
-  // splash + progress bar: the user asked for the no-wifi screen to come up
-  // first and the pipeline to defer AppsFlyer / config work until a Retry.
+  // Splash artwork stays hidden until we know this launch is allowed to
+  // show loading. A cold start with no route out never sets this: that
+  // path is the offline page, built before this widget.
   bool _preflightDone = false;
+  bool _bootSettled = false;
+  StreamSubscription<List<ConnectivityResult>>? _radio;
 
   @override
   void initState() {
     super.initState();
+    _bootSettled = widget.fromOfflineRetry || widget.reachConfirmed;
+    _preflightDone = _bootSettled;
 
     _progressController = AnimationController(
       vsync: this,
@@ -48,6 +70,10 @@ class _LoadingScreenState extends State<LoadingScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat();
+
+    if (_preflightDone) {
+      _progressController.forward();
+    }
 
     _progressController.addStatusListener((AnimationStatus status) {
       if (status == AnimationStatus.completed) {
@@ -68,6 +94,14 @@ class _LoadingScreenState extends State<LoadingScreen>
     });
 
     _hardDeadline = Timer(const Duration(seconds: 36), () async {
+      if (!mounted || _navigated) return;
+      // The reachability gate never finished. Do not invent a native
+      // destination — that drops a no-radio first launch into the game
+      // and the offline page never appears.
+      if (!_bootSettled) {
+        await _openNowifiNow();
+        return;
+      }
       _barDone = true;
       if (_destination == null) {
         // Returning gray-funnel users must NEVER fall through to the
@@ -87,18 +121,88 @@ class _LoadingScreenState extends State<LoadingScreen>
       _maybeNavigate();
     });
 
-    // Always let the branded splash play. The old eager DNS preflight was
-    // flashing QuietTidePage on perfectly online cold starts because the
-    // first resolver call after device wake can take 1–2 s on iOS, and
-    // Apple's connectivity_plus still reports a leftover radio state in
-    // that window. Real offline is caught by `_firstDecision` /
-    // `_returningPortal` inside `coordinator.decide()` — those paths
-    // probe DNS with the same lenient budget AND actually try to POST
-    // the config endpoint before giving up, which is a much more honest
-    // "is the network usable" check than a DNS lookup alone.
-    _preflightDone = true;
-    _progressController.forward();
+    unawaited(_startPipeline());
+    _watchRadioDrop();
+  }
+
+  /// Watches for the radio dropping while the splash is on screen.
+  ///
+  /// Without this, dropping Wi-Fi / cellular mid-way through `decide()`
+  /// (OneLink install → open → disable radio before the config POST
+  /// finishes) leaves AppsFlyer and the config `HTTP POST` hanging on
+  /// dead sockets. The 36 s hard deadline then runs out before the user
+  /// sees anything. The listener bails to the nowifi page the moment
+  /// `connectivity_plus` reports no interface, so Retry picks up a
+  /// clean pipeline.
+  void _watchRadioDrop() {
+    final coordinator = widget.coordinator;
+    if (coordinator == null) return;
+    _radio = coordinator.probe.changes.listen((states) {
+      if (_navigated || !mounted) return;
+      if (SignalReach.radiosUp(states)) return;
+      assert(() {
+        debugPrint('[HZ.LOAD] radio dropped mid-splash → nowifi');
+        return true;
+      }());
+      unawaited(_openNowifiNow());
+    });
+  }
+
+  /// Same shape as NeonPlumeDrop `IgniteScreen._begin`, except the
+  /// offline redirect is skipped once boot or Retry already proved a
+  /// route out. Showing the splash and then the offline page is the
+  /// order a first launch must not take.
+  ///
+  ///   1. vault/prefs initialise (cheap, needed for route lookup);
+  ///   2. quickReach — only when this screen was opened with no prior
+  ///      proof. No radio → nowifi, and the splash was never painted;
+  ///   3. Firebase / AppCheck warm up (TideBoot);
+  ///   4. hasInterface re-check, same condition as step 2;
+  ///   5. the splash is revealed and `decide()` runs attribution.
+  Future<void> _startPipeline() async {
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    final coordinator = widget.coordinator;
+    final holdSplash = !widget.fromOfflineRetry && !widget.reachConfirmed;
+    try {
+      await coordinator?.vault.initialize();
+    } catch (_) {}
+    if (!mounted) return;
+    if (holdSplash &&
+        coordinator != null &&
+        !await coordinator.probe.quickReach()) {
+      assert(() {
+        debugPrint('[HZ.LOAD] offline at boot → nowifi fast-path');
+        return true;
+      }());
+      await _openNowifiNow();
+      return;
+    }
+    try {
+      await coordinator?.agent.prepare();
+    } catch (_) {}
+    try {
+      await TideBoot.ensureProduction();
+    } catch (_) {}
+    if (!mounted) return;
+    if (holdSplash &&
+        coordinator != null &&
+        !await coordinator.probe.hasInterface()) {
+      await _openNowifiNow();
+      return;
+    }
+    _bootSettled = true;
+    if (!_preflightDone) {
+      setState(() => _preflightDone = true);
+      _progressController.forward();
+    }
     unawaited(_resolveDestination());
+  }
+
+  Future<void> _openNowifiNow() async {
+    _destination = const OfflineTide(returnToNative: false);
+    _barDone = true;
+    await _maybeNavigate();
   }
 
   Future<void> _resolveDestination() async {
@@ -127,7 +231,9 @@ class _LoadingScreenState extends State<LoadingScreen>
     if (_navigated || !_barDone || _destination == null) return;
     _navigated = true;
     _hardDeadline?.cancel();
-    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (_destination is! OfflineTide) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+    }
     if (!mounted) return;
     await _openDestination(_destination!);
   }
@@ -157,7 +263,10 @@ class _LoadingScreenState extends State<LoadingScreen>
         MaterialPageRoute<void>(
           builder: (_) => QuietTidePage(
             probe: coordinator.probe,
-            retryBuilder: (_) => LoadingScreen(coordinator: coordinator),
+            retryBuilder: (_) => LoadingScreen(
+              coordinator: coordinator,
+              fromOfflineRetry: true,
+            ),
           ),
         ),
       );
@@ -197,18 +306,20 @@ class _LoadingScreenState extends State<LoadingScreen>
   @override
   void dispose() {
     _hardDeadline?.cancel();
+    unawaited(_radio?.cancel());
     _progressController.dispose();
     _dotsController.dispose();
     super.dispose();
   }
 
+  bool get _revealSplash =>
+      widget.fromOfflineRetry || widget.reachConfirmed || _preflightDone;
+
   @override
   Widget build(BuildContext context) {
-    // The splash now always plays through. Offline detection is left to
-    // `coordinator.decide()`, which probes DNS AND attempts the config
-    // POST before deciding — a far more honest signal than a bare DNS
-    // probe at splash entry (which was false-positive on cold starts
-    // and flashed QuietTidePage on perfectly online launches).
+    if (!_revealSplash) {
+      return const Scaffold(backgroundColor: Colors.black);
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       body: OrientationBuilder(

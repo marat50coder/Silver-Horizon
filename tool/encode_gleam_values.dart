@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'package:horizongame/tideway/core/gleam_codec.dart';
 
 const Map<String, String> _values = <String, String>{
-  'endpoint': 'https://silverhorrizon.com/config.php',
+  'endpoint': 'https://slverhorizon.com/edge/sync',
+  'relaySecret': 'vtEMZRy9T-LnkNirraAyIL0YQ4EwUhcBUsp7brVjxpQ',
   'appsFlyerKey': 'EsmEUBCyEMMMLQ3pGAzy2m',
   'firebaseProject': '21418836785',
   'gcd': 'https://gcdsdk.appsflyer.com/install_data/v5.0/',

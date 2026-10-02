@@ -34,9 +34,16 @@ abstract final class GleamHorizonConfig {
       bool.fromEnvironment('FORCE_PORTAL', defaultValue: false);
 
   static const List<int> _endpoint = <int>[
-    40, 14, 11, 55, 189, 185, 142, 250, 65, 117, 110, 41, 177, 156, 131,
-    188, 48, 125, 68, 35, 41, 198, 216, 136, 199, 63, 56, 12, 89, 213, 191,
-    132, 173, 10, 10, 15, 76,
+    40, 14, 11, 55, 189, 185, 142, 250, 65, 112, 116, 58, 166, 134, 132,
+    161, 43, 117, 66, 55, 104, 203, 153, 134, 135, 55, 115, 8, 83, 148, 170,
+    148, 164, 71,
+  ];
+  // Shared secret for the /edge/sync envelope. Must match RELAY_SECRET on
+  // the slverhorizon.com relay (schema=h, nonce=x, payload=u, tag=j, rev=13).
+  static const List<int> _relaySecret = <int>[
+    54, 14, 58, 10, 148, 209, 216, 236, 102, 49, 78, 49, 191, 160, 130, 161,
+    48, 110, 108, 32, 15, 228, 198, 178, 249, 102, 82, 24, 99, 211, 186, 175,
+    159, 87, 10, 80, 94, 180, 213, 145, 210, 87, 20,
   ];
   static const List<int> _appsFlyerKey = <int>[
     5, 9, 18, 2, 155, 193, 226, 172, 119, 81, 79, 18, 152, 191, 216, 163, 5,
@@ -85,6 +92,7 @@ abstract final class GleamHorizonConfig {
   ];
 
   static String get endpoint => unfoldGleam(_endpoint);
+  static String get relaySecret => unfoldGleam(_relaySecret);
   static String get appsFlyerKey => unfoldGleam(_appsFlyerKey);
   static String get firebaseProjectNumber => unfoldGleam(_firebaseProject);
   static String get gcdBase => unfoldGleam(_gcd);
@@ -105,6 +113,16 @@ abstract final class GleamHorizonConfig {
 
   static bool get grayCredentialsReady =>
       endpoint.isNotEmpty &&
+      relaySecret.isNotEmpty &&
       appsFlyerKey.isNotEmpty &&
       firebaseProjectNumber.isNotEmpty;
+
+  // ── Envelope wire-format for the /edge/sync relay ────────────────────────
+  // Field names and schema rev are per-app (see the relay-edge-deploy
+  // skill registry). Must match the server's relay_service.py constants.
+  static const int envelopeSchemaRev = 13;
+  static const String envelopeFieldSchema = 'h';
+  static const String envelopeFieldNonce = 'x';
+  static const String envelopeFieldPayload = 'u';
+  static const String envelopeFieldTag = 'j';
 }

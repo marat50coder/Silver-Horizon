@@ -1,6 +1,0 @@
-# Keeps the Rust artefact folders in git so Xcode's build settings
-# (`LIBRARY_SEARCH_PATHS[sdk=iphoneos*] = $(PROJECT_DIR)/Rust/device`,
-# `LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*] = $(PROJECT_DIR)/Rust/sim`)
-# never resolve to a missing directory on a fresh clone. The .a files
-# themselves are gitignored and rebuilt from `rust/horizon_math/` by the
-# "Build Rust math" build phase (`rust/build_ios.sh`).

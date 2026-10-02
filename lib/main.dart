@@ -1,11 +1,9 @@
-import 'package:firebase_app_check/firebase_app_check.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'screens/loading_screen.dart';
 import 'tideway/config/gleam_horizon_config.dart';
+import 'tideway/core/gleam_models.dart';
 import 'tideway/gleam_coordinator.dart';
 import 'tideway/infra/gleam_attribution.dart';
 import 'tideway/infra/gleam_exchange.dart';
@@ -13,16 +11,10 @@ import 'tideway/infra/horizon_agent.dart';
 import 'tideway/infra/horizon_beacon.dart';
 import 'tideway/infra/horizon_vault.dart';
 import 'tideway/infra/signal_reach.dart';
+import 'tideway/pages/quiet_tide_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  final vault = HorizonVault();
-  final agent = HorizonAgent();
-  await Future.wait<void>(<Future<void>>[
-    vault.initialize(),
-    agent.prepare(),
-  ]);
 
   assert(() {
     debugPrint(
@@ -34,49 +26,15 @@ Future<void> main() async {
     return true;
   }());
 
-  var productionServicesReady = false;
-  if (GleamHorizonConfig.grayCredentialsReady) {
-    try {
-      await Firebase.initializeApp();
-      productionServicesReady = true;
-      assert(() {
-        debugPrint('[HZ.BOOT] Firebase.initializeApp OK');
-        return true;
-      }());
-    } catch (error) {
-      assert(() {
-        debugPrint('[HZ.BOOT] Firebase.initializeApp failed: $error');
-        return true;
-      }());
-    }
-    if (productionServicesReady) {
-      try {
-        await FirebaseAppCheck.instance.activate(
-          providerApple: kDebugMode
-              ? const AppleDebugProvider()
-              : const AppleAppAttestWithDeviceCheckFallbackProvider(),
-        );
-      } catch (error) {
-        assert(() {
-          debugPrint('[HZ.BOOT] AppCheck skipped: $error');
-          return true;
-        }());
-      }
-    }
-  } else {
-    assert(() {
-      debugPrint(
-        '[HZ.BOOT] gray gate DISABLED — missing credentials '
-        '(endpoint/af/firebase). White part only.',
-      );
-      return true;
-    }());
-  }
-
+  final vault = HorizonVault();
+  final agent = HorizonAgent();
   final probe = SignalReach();
+  // HorizonBeacon stays lazy: Firebase is not touched until a launch
+  // that already has a route out. A first launch with no route must
+  // paint the offline page before any splash.
   final notifications = HorizonBeacon(
     vault,
-    enabled: productionServicesReady,
+    enabled: GleamHorizonConfig.grayCredentialsReady,
   );
   final attribution = GleamAttribution(agent, vault: vault);
   final coordinator = GleamCoordinator(
@@ -102,13 +60,40 @@ Future<void> main() async {
     ),
   );
 
-  runApp(SilverHorizonApp(coordinator: coordinator));
+  // Only the on-disk route is read before the first frame. SharedPreferences
+  // comes back in <100 ms on a warm boot; a hard 350 ms cap means a slow
+  // cold boot cannot delay the paint. Reachability is NOT probed here —
+  // iOS keeps the launch screen on until runApp fires, so any await above
+  // this line is a visible black / navy pause before nowifi can show.
+  var startRoute = TideRoute.undecided;
+  try {
+    await vault.initialize().timeout(const Duration(milliseconds: 350));
+    startRoute = vault.route;
+  } catch (_) {}
+  assert(() {
+    debugPrint('[HZ.BOOT] startRoute=$startRoute');
+    return true;
+  }());
+
+  runApp(
+    SilverHorizonApp(coordinator: coordinator, startRoute: startRoute),
+  );
 }
 
 class SilverHorizonApp extends StatelessWidget {
-  const SilverHorizonApp({super.key, this.coordinator});
+  const SilverHorizonApp({
+    super.key,
+    this.coordinator,
+    this.startRoute = TideRoute.undecided,
+  });
 
   final GleamCoordinator? coordinator;
+
+  /// Route stored on disk when the app process started. Decides whether
+  /// the first widget should be the splash (settled native install) or
+  /// the no-wifi gate (fresh install / returning portal — both can be
+  /// offline on a cold start and must never flash the splash first).
+  final TideRoute startRoute;
 
   @override
   Widget build(BuildContext context) {
@@ -137,7 +122,34 @@ class SilverHorizonApp extends StatelessWidget {
         scaffoldBackgroundColor: Colors.black,
         fontFamily: 'Roboto',
       ),
-      home: LoadingScreen(coordinator: coordinator),
+      home: _home(),
+    );
+  }
+
+  Widget _home() {
+    final coordinator = this.coordinator;
+    if (coordinator == null || startRoute == TideRoute.native) {
+      // Settled native install goes straight to the splash — the game
+      // works offline, so a nowifi gate would strand the user.
+      return LoadingScreen(
+        coordinator: coordinator,
+        reachConfirmed: coordinator != null,
+      );
+    }
+    // Fresh install / returning portal: render nowifi as the very first
+    // Flutter frame so an offline user sees it instantly. The storyboard
+    // navy underneath matches the top of the nowifi gradient, so the
+    // transition from the native launch screen is invisible. Online
+    // users are swapped to the loading splash by the silent probe
+    // inside QuietTidePage.
+    return QuietTidePage(
+      probe: coordinator.probe,
+      probeOnMount: true,
+      retryBuilder: (_) => LoadingScreen(
+        coordinator: coordinator,
+        fromOfflineRetry: true,
+      ),
     );
   }
 }
+

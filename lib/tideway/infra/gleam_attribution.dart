@@ -70,10 +70,19 @@ class GleamAttribution {
       );
       _sdk = sdk;
       sdk.onInstallConversionData(_acceptInstall);
-      sdk.onAppOpenAttribution((raw) => _reopen = _flat(raw));
+      sdk.onAppOpenAttribution((raw) {
+        _reopen = _normalize(_flat(raw));
+        if (!_deepLinkReady.isCompleted) _deepLinkReady.complete();
+      });
       sdk.onDeepLinking((result) {
         final event = result.deepLink?.clickEvent;
-        if (event != null) _deepLink = Map<String, dynamic>.from(event);
+        gleamTrace(
+          () => '[HZ.TIDE] udl status=${result.status} '
+              'keys=${event?.keys.toList()}',
+        );
+        if (event != null && event.isNotEmpty) {
+          _deepLink = _normalize(Map<String, dynamic>.from(event));
+        }
         if (!_deepLinkReady.isCompleted) _deepLinkReady.complete();
       });
       await sdk.initSdk(
@@ -123,7 +132,7 @@ class GleamAttribution {
 
   Future<void> _acceptInstall(dynamic raw) async {
     try {
-      final received = _flat(raw);
+      final received = _normalize(_flat(raw));
       final status = received['status']?.toString().toLowerCase();
       final failed = status == 'failure' ||
           (received['af_status'] == null && received.containsKey('status'));
@@ -132,47 +141,176 @@ class GleamAttribution {
             'af_status=${received['af_status']} keys=${received.keys.toList()}',
       );
       if (failed) {
-        _install = <String, dynamic>{};
-      } else if (received['af_status'] == 'Organic') {
-        // Mirror Tower_Breaker: on Organic, pause briefly so the
-        // AppsFlyer backend has time to resolve the probabilistic
-        // match, then pull via GCD. Even if GCD still returns
-        // Organic, its payload typically carries richer partner
-        // fields (campaign, af_siteid, af_sub1..5) than the direct
-        // callback — trust GCD as the source of truth when available.
-        _install = received;
-        await Future<void>.delayed(
-          const Duration(
-            seconds: GleamHorizonConfig.organicRecheckSeconds,
-          ),
-        );
-        final late = await _fetchGcd();
-        if (late != null && late['af_status'] != null) {
-          final merged = Map<String, dynamic>.from(received);
-          late.forEach((key, value) {
-            // Prefer GCD values whenever they are non-empty strings
-            // or non-null; keep original Organic markers only when
-            // GCD left the field blank.
-            if (value == null) return;
-            if (value is String && value.trim().isEmpty) return;
-            merged[key] = value;
-          });
-          _install = merged;
-        }
+        _install ??= <String, dynamic>{};
       } else {
-        _install = received;
+        // A later Organic / thin callback (is_first_launch=0) must not
+        // wipe a Non-organic row we already stored — that is how campaign
+        // / af_sub* used to disappear from the config POST on re-open.
+        _install = _preferRicher(_install, received);
+        if (!_isPaid(_install) && received['af_status'] == 'Organic') {
+          // Rescue runs in the background. Blocking the install completer
+          // here starves `awaitSignals` for 6+ seconds and the pipeline
+          // then composes with an empty body on flaky networks.
+          unawaited(_rescuePaidInBackground(received));
+        }
       }
     } catch (error) {
       gleamTrace(() => '[HZ.TIDE] conversion parse error: $error');
-      _install = <String, dynamic>{};
+      _install ??= <String, dynamic>{};
     } finally {
       if (!_installReady.isCompleted) _installReady.complete();
+    }
+  }
+
+  bool _isBlank(dynamic value) {
+    if (value == null) return true;
+    final text = value.toString().trim();
+    if (text.isEmpty) return true;
+    final lower = text.toLowerCase();
+    return lower == 'null' || lower == '<null>' || lower == 'nil';
+  }
+
+  bool _isPaid(Map<String, dynamic>? map) {
+    final status = map?['af_status']?.toString();
+    return status != null && status.isNotEmpty && status != 'Organic';
+  }
+
+  /// Drop AF placeholders and copy OneLink aliases (pid → media_source,
+  /// c → campaign) so config.php sees the same keys the dashboard uses.
+  Map<String, dynamic> _normalize(Map<String, dynamic> raw) {
+    final out = <String, dynamic>{};
+    raw.forEach((key, value) {
+      if (_isBlank(value)) return;
+      out[key] = value;
+    });
+    void alias(String from, String to) {
+      final value = out[from];
+      if (_isBlank(value)) return;
+      if (_isBlank(out[to])) out[to] = value;
+    }
+
+    alias('pid', 'media_source');
+    alias('c', 'campaign');
+    alias('af_channel', 'media_source');
+    alias('af_adset', 'adset');
+    alias('af_c_id', 'campaign_id');
+    alias('af_siteid', 'siteid');
+    return out;
+  }
+
+  Map<String, dynamic> _preferRicher(
+    Map<String, dynamic>? current,
+    Map<String, dynamic> incoming,
+  ) {
+    if (current == null || current.isEmpty) return incoming;
+    // Already paid, new one is organic / thin → keep paid status, fold in
+    // only blank slots.
+    if (_isPaid(current) && !_isPaid(incoming)) {
+      final merged = Map<String, dynamic>.from(current);
+      incoming.forEach((key, value) {
+        if (key == 'af_status' || key == 'af_message') return;
+        if (_isBlank(merged[key]) && !_isBlank(value)) merged[key] = value;
+      });
+      return merged;
+    }
+    final merged = Map<String, dynamic>.from(current);
+    incoming.forEach((key, value) {
+      if (_isBlank(value)) return;
+      if (key == 'af_status' && _isPaid(current) && !_isPaid(incoming)) {
+        return;
+      }
+      if (_isBlank(merged[key]) || key == 'af_status' || key == 'af_message') {
+        merged[key] = value;
+      } else if (value.toString().length > merged[key].toString().length) {
+        if (key == 'campaign' ||
+            key == 'media_source' ||
+            key.startsWith('af_sub') ||
+            key.startsWith('deep_link')) {
+          merged[key] = value;
+        }
+      }
+    });
+    return merged;
+  }
+
+  Future<void> _rescuePaidInBackground(Map<String, dynamic> organic) async {
+    for (var pass = 0; pass < 3; pass++) {
+      await Future<void>.delayed(
+        Duration(
+          seconds: GleamHorizonConfig.organicRecheckSeconds + pass * 4,
+        ),
+      );
+      final gcd = await _fetchGcd();
+      if (gcd == null || gcd.isEmpty) continue;
+      final status = gcd['af_status']?.toString();
+      if (status == null || status.isEmpty) continue;
+      final normalised = _normalize(gcd);
+      _install = _preferRicher(_install, normalised);
+      gleamTrace(
+        () => '[HZ.TIDE] gcd pass=$pass af_status=$status '
+            'install=${_install?['af_status']}',
+      );
+      if (status != 'Organic') return;
     }
   }
 
   /// Writes [value] into `data[key]` only when the current value is null or
   /// an empty string. Used to lift `deep_link_sub*` into the `af_sub*` /
   /// `campaign` slots that the server reads for partner routing.
+  static void _mergeMissing(
+    Map<String, dynamic> into,
+    Map<String, dynamic> from,
+  ) {
+    from.forEach((key, value) => _hoistIfEmpty(into, key, value));
+  }
+
+  static bool _nonEmpty(Object? value) =>
+      value is String && value.trim().isNotEmpty;
+
+  /// The backend reads `campaign` / `af_sub*` / `media_source`. A OneLink
+  /// often delivers those only as `deep_link_*`, and an empty string already
+  /// sitting in the conversion map must not block the real value.
+  static void _hoistPartnerSlots(Map<String, dynamic> body) {
+    _hoistIfEmpty(body, 'campaign', body['deep_link_value']);
+    _hoistIfEmpty(body, 'campaign_id', body['deep_link_value']);
+    _hoistIfEmpty(body, 'af_sub1', body['deep_link_sub1']);
+    _hoistIfEmpty(body, 'af_sub2', body['deep_link_sub2']);
+    _hoistIfEmpty(body, 'af_sub3', body['deep_link_sub3']);
+    _hoistIfEmpty(body, 'af_sub4', body['deep_link_sub4']);
+    _hoistIfEmpty(body, 'af_sub5', body['deep_link_sub5']);
+    if (_nonEmpty(body['deep_link_value']) ||
+        _nonEmpty(body['campaign']) ||
+        _nonEmpty(body['af_sub1'])) {
+      _hoistIfEmpty(body, 'media_source', 'af_dynamic_onelink');
+    }
+  }
+
+  static const Set<String> _identityKeys = <String>{
+    'af_id',
+    'bundle_id',
+    'os',
+    'store_id',
+    'locale',
+    'push_token',
+    'firebase_project_id',
+    'sub_id_10',
+  };
+
+  Future<void> _rememberPartners(Map<String, dynamic> body) async {
+    final vault = _vault;
+    if (vault == null) return;
+    final memo = await vault.readAttributionMemo() ?? <String, String>{};
+    body.forEach((key, value) {
+      if (_identityKeys.contains(key) || value == null) return;
+      final text = value is String ? value.trim() : value.toString().trim();
+      if (text.isEmpty || text == 'null') return;
+      final current = memo[key];
+      if (current == null || current.isEmpty) memo[key] = text;
+    });
+    if (memo.isEmpty) return;
+    await vault.writeAttributionMemo(memo);
+  }
+
   static void _hoistIfEmpty(Map<String, dynamic> data, String key, Object? value) {
     if (value == null) return;
     if (value is String && value.trim().isEmpty) return;
@@ -283,26 +421,19 @@ class GleamAttribution {
     bool stickyGrayAttribution = false,
   }) async {
     final body = <String, dynamic>{};
-    if (_install != null) body.addAll(_install!);
-    if (_reopen != null) {
-      _reopen!.forEach((key, value) => body.putIfAbsent(key, () => value));
-    }
-    if (_deepLink != null) {
-      _deepLink!.forEach((key, value) => body.putIfAbsent(key, () => value));
-    }
+    if (_install != null) body.addAll(_normalize(_install!));
+    // `_mergeMissing` fills only blanks and never lets `campaign: ""`
+    // block a real OneLink value. Each source is normalized first so
+    // placeholders ("<null>", "nil") never reach the POST either.
+    if (_reopen != null) _mergeMissing(body, _normalize(_reopen!));
+    if (_deepLink != null) _mergeMissing(body, _normalize(_deepLink!));
 
-    // Replay the attribution memo saved on the install launch. AppsFlyer
-    // does NOT re-emit `onDeepLinking` on re-opens, so without the memo
-    // the partner identifiers (`deep_link_value`, `deep_link_sub1..5`,
-    // `campaign`, `media_source`) would be empty on launch 2 even though
-    // the install is attributed. `_hoistIfEmpty` keeps anything AppsFlyer
-    // did resurface this run as the source of truth.
-    if (stickyGrayAttribution && _vault != null) {
+    // AppsFlyer does not re-emit onDeepLinking after the install launch.
+    // The memo is the only copy of deep_link_sub* / campaign on a re-open.
+    if (_vault != null) {
       final memo = await _vault.readAttributionMemo();
       if (memo != null) {
-        memo.forEach((key, value) {
-          _hoistIfEmpty(body, key, value);
-        });
+        _mergeMissing(body, _normalize(Map<String, dynamic>.from(memo)));
       }
     }
 
@@ -321,71 +452,27 @@ class GleamAttribution {
     // launch, so a plain re-open would otherwise lose `deep_link_value`
     // and the promotion gate would close — the user would see the
     // native game on launch 2 even though the install is non-organic.
-    if (body['af_status'] == 'Organic' &&
-        (stickyGrayAttribution || _looksLikeProbabilisticOneLink(body))) {
-      final before = body['af_message'];
+    _hoistPartnerSlots(body);
+    final status = body['af_status']?.toString().toLowerCase();
+    final promote = stickyGrayAttribution ||
+        _looksLikeProbabilisticOneLink(body) ||
+        _nonEmpty(body['deep_link_value']);
+    if (promote && status != 'non-organic') {
+      final before = body['af_status'];
       body['af_status'] = 'Non-organic';
       body['af_message'] =
           'probabilistic_onelink (${body['match_type'] ?? 'unknown'})';
-      // Probabilistic attribution delivers the partner identifiers through
-      // `deep_link_*` keys only — `af_sub1..5`, `campaign`, `campaign_id`
-      // and `media_source` arrive empty because no IDFA was available for
-      // a deterministic match. The server classifies an install with
-      // empty campaign slots as organic even when `af_status=Non-organic`,
-      // so hoist the deep-link values into the slots the backend reads.
-      _hoistIfEmpty(body, 'campaign', body['deep_link_value']);
-      _hoistIfEmpty(body, 'campaign_id', body['deep_link_value']);
-      _hoistIfEmpty(body, 'af_sub1', body['deep_link_sub1']);
-      _hoistIfEmpty(body, 'af_sub2', body['deep_link_sub2']);
-      _hoistIfEmpty(body, 'af_sub3', body['deep_link_sub3']);
-      _hoistIfEmpty(body, 'af_sub4', body['deep_link_sub4']);
-      _hoistIfEmpty(body, 'af_sub5', body['deep_link_sub5']);
-      // `af_dynamic_onelink` is the standard AppsFlyer media source for an
-      // install attributed via OneLink. On Android with Google Play Install
-      // Referrer AppsFlyer sets this itself, on iOS probabilistic it leaves
-      // the field empty and the backend then classifies the install as
-      // organic (sub_id_11 blank + empty media_source in extra_param_7).
-      // Setting the canonical value here mirrors what AppsFlyer would have
-      // sent if the install had matched deterministically.
       _hoistIfEmpty(body, 'media_source', 'af_dynamic_onelink');
       gleamTrace(
-        () => '[HZ.TIDE] promoted Organic → Non-organic '
-            '(was="$before" '
+        () => '[HZ.TIDE] promoted $before → Non-organic '
+            'sticky=$stickyGrayAttribution '
             'deep_link_value=${body['deep_link_value']} '
-            'is_deferred=${body['is_deferred']} '
-            'match_type=${body['match_type']} '
             'campaign=${body['campaign']} '
             'media_source=${body['media_source']} '
-            'af_sub1=${body['af_sub1']})',
+            'af_sub1=${body['af_sub1']}',
       );
-      // Persist the attribution memo so subsequent launches can replay
-      // the OneLink partner identifiers (AppsFlyer `onDeepLinking` only
-      // fires on the install launch).
-      final vault = _vault;
-      if (vault != null) {
-        unawaited(vault.writeAttributionMemo(<String, String>{
-          for (final key in const <String>[
-            'deep_link_value',
-            'deep_link_sub1',
-            'deep_link_sub2',
-            'deep_link_sub3',
-            'deep_link_sub4',
-            'deep_link_sub5',
-            'campaign',
-            'campaign_id',
-            'media_source',
-            'af_sub1',
-            'af_sub2',
-            'af_sub3',
-            'af_sub4',
-            'af_sub5',
-            'match_type',
-          ])
-            if (body[key] is String && (body[key] as String).trim().isNotEmpty)
-              key: body[key] as String,
-        }));
-      }
     }
+    await _rememberPartners(body);
 
     body['af_id'] = await appsFlyerId() ?? body['af_id'] ?? '';
     body['bundle_id'] = GleamHorizonConfig.bundleId;

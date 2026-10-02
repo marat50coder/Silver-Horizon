@@ -4,11 +4,6 @@ import 'slot_symbol.dart';
 
 /// A payline is a per-column list of row indices (0=top, 1=middle, 2=bottom)
 /// that traces a shape across the 5-reel × 3-row grid.
-///
-/// The `rows` arrays are purely geometric overlay metadata — the game-math
-/// payline rows live in `rust/horizon_math/src/paylines.rs` and must stay
-/// numerically identical to the arrays below. The evaluation itself is run
-/// by Rust (`hx_spin`), so this file is "renderer only".
 class Payline {
   const Payline({
     required this.name,
@@ -31,8 +26,7 @@ class Payline {
 /// The 10 paylines used by Silver Horizon.
 ///
 /// Colors are chosen to be visually distinct so multiple simultaneous wins
-/// can be told apart when overlaid on the reels. `rows` arrays MUST match
-/// `rust/horizon_math/src/paylines.rs::RAW` cell for cell.
+/// can be told apart when overlaid on the reels.
 const List<Payline> kPaylines = <Payline>[
   Payline(
     name: 'Line 1',
@@ -86,8 +80,7 @@ const List<Payline> kPaylines = <Payline>[
   ),
 ];
 
-/// Result for a single winning line. Rust returns one of these per line
-/// win via `hx_last_line_*` queries after `hx_spin`.
+/// Result for a single winning line.
 class LineWin {
   const LineWin({
     required this.paylineIndex,

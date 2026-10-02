@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -8,10 +11,18 @@ class QuietTidePage extends StatefulWidget {
     super.key,
     required this.probe,
     required this.retryBuilder,
+    this.probeOnMount = false,
   });
 
   final SignalReach probe;
   final WidgetBuilder retryBuilder;
+
+  /// True when the page is being shown as the first Flutter frame on
+  /// a cold start, before anything has verified reachability. The page
+  /// then runs one silent probe and auto-advances to [retryBuilder] if
+  /// it turns out we actually had a route out. Offline users never see
+  /// a change — they stay on the nowifi screen that just appeared.
+  final bool probeOnMount;
 
   @override
   State<QuietTidePage> createState() => _QuietTidePageState();
@@ -20,6 +31,9 @@ class QuietTidePage extends StatefulWidget {
 class _QuietTidePageState extends State<QuietTidePage> {
   bool _checking = false;
   bool _stillOffline = false;
+  bool _left = false;
+  bool _resumeInFlight = false;
+  StreamSubscription<List<ConnectivityResult>>? _radio;
 
   @override
   void initState() {
@@ -30,10 +44,60 @@ class _QuietTidePageState extends State<QuietTidePage> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    // Subscribe after the first paint. connectivity_plus replays the
+    // current interface on listen, and iOS often reports wifi/mobile
+    // while there is still no route out. Acting on that replay inside
+    // initState replaced this page with the loading splash before it
+    // was ever seen.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _left) return;
+      _radio = widget.probe.changes.listen((states) {
+        if (SignalReach.radiosUp(states)) {
+          unawaited(_resumeAfterReconnect());
+        }
+      });
+      if (widget.probeOnMount) {
+        // Silent reachability check after the first paint. If the device
+        // actually has a route, hand over to the loading splash without
+        // waiting for the user to tap Retry. Offline users never see a
+        // visible change: the probe just resolves to false and this page
+        // stays exactly where it already rendered.
+        unawaited(_resumeAfterReconnect());
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_radio?.cancel());
+    super.dispose();
+  }
+
+  Future<void> _resumeAfterReconnect() async {
+    if (_left || !mounted || _resumeInFlight || _checking) return;
+    _resumeInFlight = true;
+    bool online = false;
+    try {
+      online = await widget.probe.canReachNetwork();
+    } catch (_) {
+      online = false;
+    } finally {
+      _resumeInFlight = false;
+    }
+    if (!online || _left || !mounted) return;
+    await _enterLoading();
+  }
+
+  Future<void> _enterLoading() async {
+    if (_left || !mounted) return;
+    _left = true;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(builder: widget.retryBuilder),
+    );
   }
 
   Future<void> _retry() async {
-    if (_checking) return;
+    if (_checking || _left) return;
     HapticFeedback.lightImpact();
     setState(() {
       _checking = true;
@@ -47,9 +111,7 @@ class _QuietTidePageState extends State<QuietTidePage> {
     }
     if (!mounted) return;
     if (online) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(builder: widget.retryBuilder),
-      );
+      await _enterLoading();
       return;
     }
     setState(() {

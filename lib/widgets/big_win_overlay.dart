@@ -2,8 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../math/horizon_ffi.dart' as rust;
-
 /// Full-screen celebration overlay for large wins.
 ///
 /// The tier is determined by the multiplier of the win vs. the bet:
@@ -27,25 +25,12 @@ class BigWinOverlay extends StatefulWidget {
   final VoidCallback onDone;
 
   /// Returns null if the win doesn't qualify as a Big Win.
-  ///
-  /// The actual tier thresholds live in Rust (`hx_big_win_tier`) so the
-  /// multiplier cutoffs are not visible as plaintext integers in the
-  /// Dart snapshot. Dart only owns the display strings per tier.
   static String? tierFor(int multiplier) {
-    if (multiplier < 0) return null;
-    final int tier = rust.hxBigWinTier(multiplier);
-    switch (tier) {
-      case 3:
-        return 'LEGENDARY WIN';
-      case 2:
-        return 'EPIC WIN';
-      case 1:
-        return 'MEGA WIN';
-      case 0:
-        return 'BIG WIN';
-      default:
-        return null;
-    }
+    if (multiplier >= 150) return 'LEGENDARY WIN';
+    if (multiplier >= 75) return 'EPIC WIN';
+    if (multiplier >= 25) return 'MEGA WIN';
+    if (multiplier >= 10) return 'BIG WIN';
+    return null;
   }
 
   @override

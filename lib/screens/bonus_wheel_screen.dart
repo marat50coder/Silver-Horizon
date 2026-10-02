@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../math/horizon_ffi.dart' as rust;
 import '../widgets/app_layout.dart';
 
 /// Result of a bonus wheel spin — either a coin prize or a free-spins award.
@@ -37,10 +36,23 @@ class BonusWheelScreen extends StatefulWidget {
 
 class _BonusWheelScreenState extends State<BonusWheelScreen>
     with TickerProviderStateMixin {
-  /// Free-spins sentinel: Rust owns the exact numeric value, we just mirror
-  /// it so UI code can be written against a stable Dart constant. The
-  /// Rust side is the source of truth for the slice prize math.
-  int get _freeSpinsMarker => rust.hxBonusFreeSpinsMarker();
+  /// Free-spins sentinel: any slice whose multiplier equals this constant is
+  /// rendered as "10 FREE SPINS" and returns free spins instead of coins.
+  static const int _freeSpinsMarker = -1;
+  static const int _freeSpinsCount = 10;
+
+  /// Modest table for a 3-scatter bonus.
+  static const List<int> _multipliers3 = <int>[2, 5, 10, 3, 20, 4, 50, 8];
+
+  /// Mega wheel (4 scatters) — one slice replaced with FREE SPINS.
+  static const List<int> _multipliers4 = <int>[
+    10, 20, 35, _freeSpinsMarker, 60, 25, 100, 40,
+  ];
+
+  /// Grand wheel (5 scatters) — bigger prizes plus FREE SPINS slice.
+  static const List<int> _multipliers5 = <int>[
+    25, 40, 75, _freeSpinsMarker, 120, 50, 250, 80,
+  ];
 
   late final AnimationController _spinController;
   late final AnimationController _idleController;
@@ -56,16 +68,10 @@ class _BonusWheelScreenState extends State<BonusWheelScreen>
 
   bool get _mega => widget.scatterCount >= 4;
 
-  int get _sliceCount => rust.hxBonusSliceCount();
-
-  /// Snapshot of the slice multipliers for the current scatter tier.
-  /// Only used to drive the on-wheel labels — never the prize math.
   List<int> get _multipliers {
-    final int n = _sliceCount;
-    return <int>[
-      for (int i = 0; i < n; i++)
-        rust.hxBonusMultiplier(widget.scatterCount, i),
-    ];
+    if (widget.scatterCount >= 5) return _multipliers5;
+    if (widget.scatterCount >= 4) return _multipliers4;
+    return _multipliers3;
   }
 
   @override
@@ -88,22 +94,45 @@ class _BonusWheelScreenState extends State<BonusWheelScreen>
     super.dispose();
   }
 
+  /// Coin prize on a slice = multiplier × triggering bet. Returns 0 for
+  /// the Free Spins slice.
+  int _coinPrizeFor(int index) {
+    final int mult = _multipliers[index];
+    if (mult == _freeSpinsMarker) return 0;
+    return mult * widget.bet;
+  }
+
+  bool _isFreeSpinsSlice(int index) =>
+      _multipliers[index] == _freeSpinsMarker;
+
+  /// 4+ scatters bias the stop toward the juicier slices while keeping the
+  /// FREE SPINS slice enticingly likely.
+  int _pickTarget() {
+    final List<int> table = _multipliers;
+    if (!_mega) return _random.nextInt(table.length);
+    // Weights per index: FREE SPINS slice (idx 3) gets a moderate weight so
+    // it triggers often enough to feel real, but not overwhelmingly.
+    const List<int> weights = <int>[10, 12, 12, 14, 8, 12, 5, 11];
+    int total = 0;
+    for (int i = 0; i < table.length; i++) {
+      total += weights[i % weights.length];
+    }
+    int roll = _random.nextInt(total);
+    for (int i = 0; i < table.length; i++) {
+      roll -= weights[i % weights.length];
+      if (roll < 0) return i;
+    }
+    return 0;
+  }
+
   void _spin() {
     if (_spinning || _finished) return;
-
-    // Rust rolls the wheel, picks the landing slice (weighted for the
-    // 4/5-scatter tiers), and resolves the prize into either coins or
-    // free spins. We only animate the pointer — no prize math on the
-    // Dart side.
-    final int target = rust.hxBonusRoll(widget.scatterCount, widget.bet);
-    final int wonCoins = rust.hxBonusLastCoins();
-    final int wonFreeSpins = rust.hxBonusLastFreeSpins();
-
+    final int slices = _multipliers.length;
+    final int target = _pickTarget();
     setState(() {
       _spinning = true;
     });
 
-    final int slices = _sliceCount;
     final double sliceAngle = 2 * math.pi / slices;
     final double jitter = (_random.nextDouble() - 0.5) * sliceAngle * 0.35;
     final double baseAngle = -target * sliceAngle + jitter;
@@ -116,8 +145,13 @@ class _BonusWheelScreenState extends State<BonusWheelScreen>
       setState(() {
         _spinning = false;
         _finished = true;
-        _awardedCoins = wonCoins;
-        _awardedFreeSpins = wonFreeSpins;
+        if (_isFreeSpinsSlice(target)) {
+          _awardedCoins = 0;
+          _awardedFreeSpins = _freeSpinsCount;
+        } else {
+          _awardedCoins = _coinPrizeFor(target);
+          _awardedFreeSpins = 0;
+        }
       });
     });
   }
