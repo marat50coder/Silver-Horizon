@@ -63,13 +63,20 @@ class GleamCoordinator {
     }());
 
     notifications.onTokenChanged = _refreshForToken;
-    final coldRoute = await GleamRouteReader.consume();
-    if (coldRoute != null) {
+    // Pull the tap URL from SceneDelegate AND FCM before any cached first
+    // page is considered. Otherwise a killed-app push opens the partner
+    // homepage instead of the notification destination.
+    await notifications.ingestLaunchPush();
+    final sceneRoute = await GleamRouteReader.consume();
+    final fcmRoute = await vault.consumePushUrl();
+    final pushRoute = (sceneRoute != null && sceneRoute.isNotEmpty)
+        ? sceneRoute
+        : ((fcmRoute != null && fcmRoute.isNotEmpty) ? fcmRoute : null);
+    if (pushRoute != null) {
       await vault.saveRoute(TideRoute.portal);
-      await vault.consumePushUrl();
       unawaited(_backgroundDispatch());
       onProgress(1);
-      return PortalTide(coldRoute, coldLaunch: true);
+      return PortalTide(pushRoute, coldLaunch: sceneRoute != null);
     }
 
     onProgress(0.14);
@@ -148,7 +155,9 @@ class GleamCoordinator {
     if (!await probe.hasInterface()) {
       return const OfflineTide(returnToNative: false);
     }
-    final pending = await vault.consumePushUrl();
+    await notifications.ingestLaunchPush();
+    final pending = await vault.consumePushUrl() ??
+        await GleamRouteReader.consume();
     if (pending != null && pending.isNotEmpty) {
       progress(1);
       return PortalTide(pending);

@@ -83,7 +83,7 @@ class _GleamInvitationState extends State<GleamInvitation> {
     final baseWidth = landscape
         ? (media.size.width * 0.42).clamp(320.0, 560.0)
         : (media.size.width * 0.80).clamp(280.0, 440.0);
-    final width = baseWidth * 0.60 * 0.75;
+    final width = baseWidth * 0.60 * 0.75 * 2;
     final height = (landscape ? 66.0 : 74.0) * 0.75;
     final fontSize = (landscape ? 22.0 : 25.0) * 0.80;
 

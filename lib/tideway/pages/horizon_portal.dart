@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
+import '../infra/gleam_route_reader.dart';
 import '../infra/horizon_agent.dart';
 import '../infra/horizon_beacon.dart';
 import '../infra/horizon_vault.dart';
@@ -46,7 +47,9 @@ class _HorizonPortalState extends State<HorizonPortal>
   int _redirectAttempts = 0;
   String? _lastMainUrl;
   Timer? _metricsDebounce;
+  Timer? _pageFinishTimer;
   Size? _lastMetricsSize;
+  bool _holdColdReload = false;
 
   @override
   void initState() {
@@ -81,12 +84,7 @@ class _HorizonPortalState extends State<HorizonPortal>
           .setAllowsBackForwardNavigationGestures(true);
     }
 
-    widget.notifications.onDestination = (url) {
-      final uri = Uri.tryParse(url);
-      if (mounted && uri != null && uri.hasScheme) {
-        _controller.loadRequest(uri);
-      }
-    };
+    widget.notifications.onDestination = _openPushUrl;
     _networkSubscription = widget.probe.changes.listen((states) {
       if (states.every((state) => state == ConnectivityResult.none)) {
         _goOffline();
@@ -158,11 +156,22 @@ class _HorizonPortalState extends State<HorizonPortal>
     }
   }
 
+  void _openPushUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (!mounted || uri == null || !uri.hasScheme) return;
+    _holdColdReload = true;
+    _pageFinishTimer?.cancel();
+    _controller.loadRequest(uri);
+  }
+
   Future<void> _consumePending() async {
-    final value = await widget.vault.consumePushUrl();
-    final uri = value == null ? null : Uri.tryParse(value);
-    if (mounted && uri != null && uri.hasScheme) {
-      await _controller.loadRequest(uri);
+    final stored = await widget.vault.consumePushUrl();
+    final fromScene = await GleamRouteReader.consume();
+    final value = (fromScene != null && fromScene.isNotEmpty)
+        ? fromScene
+        : stored;
+    if (value != null && value.isNotEmpty) {
+      _openPushUrl(value);
     }
   }
 
@@ -174,7 +183,8 @@ class _HorizonPortalState extends State<HorizonPortal>
       onPageFinished: (_) {
         _redirectAttempts = 0;
         _installShell();
-        Future<void>.delayed(const Duration(milliseconds: 640), () async {
+        _pageFinishTimer?.cancel();
+        _pageFinishTimer = Timer(const Duration(milliseconds: 640), () async {
           if (!mounted) return;
           setState(() {});
           await _controller.runJavaScript(
@@ -182,7 +192,9 @@ class _HorizonPortalState extends State<HorizonPortal>
             'window.visualViewport?.dispatchEvent(new Event("resize"));',
           );
           _installShell();
-          if (widget.coldLaunch && !_coldReloadIssued) {
+          if (widget.coldLaunch &&
+              !_coldReloadIssued &&
+              !_holdColdReload) {
             _coldReloadIssued = true;
             await _controller.reload();
           }
@@ -366,6 +378,7 @@ class _HorizonPortalState extends State<HorizonPortal>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _metricsDebounce?.cancel();
+    _pageFinishTimer?.cancel();
     _networkSubscription?.cancel();
     widget.notifications.onDestination = null;
     SystemChrome.setEnabledSystemUIMode(

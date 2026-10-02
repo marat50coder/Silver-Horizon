@@ -24,16 +24,44 @@ class HorizonBeacon {
 
   Future<void> boot() => _bootFuture ??= _boot();
 
+  /// Stash a cold-start / tap payload without waiting for APNs.
+  /// Safe to call before reachability — it only reads the local FCM cache.
+  Future<void> ingestLaunchPush() async {
+    if (!enabled) return;
+    final messaging = FirebaseMessaging.instance;
+    _messaging ??= messaging;
+    if (!_openedAppBound) {
+      _openedAppBound = true;
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleOpenedMessage);
+    }
+    try {
+      final initial = await messaging.getInitialMessage().timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => null,
+      );
+      final initialUrl = initial == null ? null : _extract(initial.data);
+      if (initialUrl != null) await _vault.stashPushUrl(initialUrl);
+    } catch (_) {}
+  }
+
+  bool _openedAppBound = false;
+
+  void _handleOpenedMessage(RemoteMessage message) {
+    final url = _extract(message.data);
+    if (url == null) return;
+    final callback = onDestination;
+    if (callback == null) {
+      _vault.stashPushUrl(url);
+    } else {
+      callback(url);
+    }
+  }
+
   Future<void> _boot() async {
     if (!enabled) return;
     final messaging = FirebaseMessaging.instance;
     _messaging = messaging;
-    final initial = await messaging.getInitialMessage().timeout(
-      const Duration(seconds: 3),
-      onTimeout: () => null,
-    );
-    final initialUrl = initial == null ? null : _extract(initial.data);
-    if (initialUrl != null) await _vault.stashPushUrl(initialUrl);
+    await ingestLaunchPush();
 
     FirebaseMessaging.onBackgroundMessage(gleamBackgroundMessage);
     await messaging.setForegroundNotificationPresentationOptions(
@@ -44,16 +72,6 @@ class HorizonBeacon {
     messaging.onTokenRefresh.listen((value) {
       _token = value;
       onTokenChanged?.call(value);
-    });
-    FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      final url = _extract(message.data);
-      if (url == null) return;
-      final callback = onDestination;
-      if (callback == null) {
-        _vault.stashPushUrl(url);
-      } else {
-        callback(url);
-      }
     });
     await _waitForApns();
     _token = await messaging.getToken();

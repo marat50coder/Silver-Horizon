@@ -10,25 +10,30 @@ class SceneDelegate: FlutterSceneDelegate {
     willConnectTo session: UISceneSession,
     options connectionOptions: UIScene.ConnectionOptions
   ) {
+    // Write the tap URL BEFORE Flutter boots. SharedPreferences is read
+    // from UserDefaults on the first Dart frame — if we call super first
+    // the coordinator already consumed an empty key and opened the cached
+    // first WebView page instead of the push destination.
+    if let response = connectionOptions.notificationResponse,
+       let destination = Self.destination(
+         inside: response.notification.request.content.userInfo
+       ) {
+      persist(destination)
+    }
+
     super.scene(scene, willConnectTo: session, options: connectionOptions)
+  }
 
-    guard
-      let response = connectionOptions.notificationResponse,
-      let destination = Self.destination(
-        inside: response.notification.request.content.userInfo
-      )
-    else { return }
-
+  static func persist(_ destination: String) {
     let defaults = UserDefaults.standard
-    defaults.set(destination, forKey: Self.launchRouteKey)
+    defaults.set(destination, forKey: launchRouteKey)
     defaults.synchronize()
-
     #if DEBUG
     NSLog("[HZ.ROUTE] captured notification destination")
     #endif
   }
 
-  private static func destination(
+  static func destination(
     inside payload: [AnyHashable: Any]
   ) -> String? {
     let candidates = ["deep_link", "target", "url", "deeplink", "link"]
