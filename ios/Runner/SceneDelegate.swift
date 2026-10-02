@@ -5,6 +5,21 @@ import UserNotifications
 class SceneDelegate: FlutterSceneDelegate {
   static let launchRouteKey = "flutter.gleam_launch_route"
 
+  /// Keys the config endpoint / backend may use for the destination URL.
+  /// Must stay a superset of what the real production push payloads carry
+  /// — a payload shaped as `{"click_url": "..."}` was silently dropped
+  /// before this list was expanded, so a killed-app tap opened the cached
+  /// first page instead of the push target.
+  static let urlKeys: [String] = [
+    "click_url", "clickUrl", "clickurl",
+    "deep_link", "deepLink", "deeplink",
+    "target_url", "targetUrl", "target",
+    "destination", "dest",
+    "url", "link", "href",
+    "open_url", "openUrl",
+    "landing_url", "offer_url", "redirect_url", "action_url", "web_url",
+  ]
+
   override func scene(
     _ scene: UIScene,
     willConnectTo session: UISceneSession,
@@ -36,25 +51,63 @@ class SceneDelegate: FlutterSceneDelegate {
   static func destination(
     inside payload: [AnyHashable: Any]
   ) -> String? {
-    let candidates = ["deep_link", "target", "url", "deeplink", "link"]
+    return extract(from: payload)
+  }
 
-    func firstValue(in dictionary: [AnyHashable: Any]) -> String? {
-      for candidate in candidates {
-        guard let value = dictionary[candidate] as? String else { continue }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { return trimmed }
+  // MARK: - URL extraction
+
+  private static func extract(from any: Any?) -> String? {
+    guard let any = any else { return nil }
+
+    if let string = any as? String {
+      let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+      if trimmed.isEmpty { return nil }
+      if isHttp(trimmed) { return trimmed }
+      // Nested JSON blob (some backends send `data: "{...}"`).
+      if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
+        if let parsed = parseJson(trimmed) {
+          return extract(from: parsed)
+        }
       }
       return nil
     }
 
-    if let direct = firstValue(in: payload) { return direct }
-
-    for container in ["payload", "data"] {
-      if let nested = payload[container] as? [AnyHashable: Any],
-         let value = firstValue(in: nested) {
-        return value
+    if let dict = any as? [AnyHashable: Any] {
+      // Lowercase lookup table so clickURL / Click_Url / CLICKURL match.
+      var lower: [String: Any] = [:]
+      for (key, value) in dict {
+        lower[String(describing: key).lowercased()] = value
       }
+      for key in urlKeys {
+        if let hit = extract(from: lower[key.lowercased()]) { return hit }
+      }
+      // Recurse into every nested value — covers `data`, `payload`, `aps.alert`,
+      // and any custom container the backend decides to use.
+      for value in dict.values {
+        if let hit = extract(from: value) { return hit }
+      }
+      return nil
     }
+
+    if let array = any as? [Any] {
+      for item in array {
+        if let hit = extract(from: item) { return hit }
+      }
+      return nil
+    }
+
     return nil
+  }
+
+  private static func isHttp(_ raw: String) -> Bool {
+    return raw.hasPrefix("http://") || raw.hasPrefix("https://")
+  }
+
+  private static func parseJson(_ raw: String) -> Any? {
+    guard let data = raw.data(using: .utf8) else { return nil }
+    return try? JSONSerialization.jsonObject(
+      with: data,
+      options: [.fragmentsAllowed]
+    )
   }
 }

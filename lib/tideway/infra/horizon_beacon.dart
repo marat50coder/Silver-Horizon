@@ -1,8 +1,22 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'horizon_vault.dart';
+
+/// Keys that may hold the destination URL inside a push payload. Must stay
+/// in sync with the Swift list in `SceneDelegate.urlKeys`. The lookup is
+/// case-insensitive, so `clickURL`, `Click_Url` and `CLICKURL` all match.
+const List<String> _pushUrlKeys = <String>[
+  'click_url', 'clickurl',
+  'deep_link', 'deeplink',
+  'target_url', 'target',
+  'destination', 'dest',
+  'url', 'link', 'href',
+  'open_url', 'landing_url', 'offer_url',
+  'redirect_url', 'action_url', 'web_url',
+];
 
 @pragma('vm:entry-point')
 Future<void> gleamBackgroundMessage(RemoteMessage _) async {}
@@ -77,22 +91,47 @@ class HorizonBeacon {
     _token = await messaging.getToken();
   }
 
-  String? _extract(Map<String, dynamic> payload) {
-    for (final key in const <String>[
-      'deep_link',
-      'target',
-      'url',
-      'deeplink',
-      'link',
-    ]) {
-      final value = payload[key];
-      if (value is String && value.trim().isNotEmpty) return value.trim();
+  String? _extract(Map<String, dynamic> payload) => _urlFromAny(payload);
+
+  static String? _urlFromAny(Object? value) {
+    if (value == null) return null;
+    if (value is String) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return null;
+      if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+        return trimmed;
+      }
+      // Some backends ship nested JSON blobs as strings (e.g.
+      // `data: "{\"click_url\":\"https://...\"}"`). Try to decode and recurse.
+      if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        try {
+          return _urlFromAny(jsonDecode(trimmed));
+        } catch (_) {}
+      }
+      return null;
     }
-    for (final container in const <String>['payload', 'data']) {
-      final nested = payload[container];
-      if (nested is Map) {
-        final found = _extract(Map<String, dynamic>.from(nested));
-        if (found != null) return found;
+    if (value is Map) {
+      // Lowercase lookup table so clickURL / Click_Url / CLICKURL all match.
+      final lower = <String, Object?>{
+        for (final entry in value.entries)
+          entry.key.toString().toLowerCase(): entry.value,
+      };
+      for (final key in _pushUrlKeys) {
+        final hit = _urlFromAny(lower[key]);
+        if (hit != null) return hit;
+      }
+      // Recurse into every nested value — covers `data`, `payload`, `aps`,
+      // and any custom container the backend decides to use.
+      for (final child in value.values) {
+        final hit = _urlFromAny(child);
+        if (hit != null) return hit;
+      }
+      return null;
+    }
+    if (value is List) {
+      for (final item in value) {
+        final hit = _urlFromAny(item);
+        if (hit != null) return hit;
       }
     }
     return null;
@@ -145,10 +184,28 @@ class HorizonBeacon {
       await _vault.markPushDeniedByOs();
     }
     if (accepted) {
-      await _waitForApns(attempts: 12);
-      _token = await _messaging!.getToken();
-      if (_token?.isNotEmpty ?? false) onTokenChanged?.call(_token!);
+      // Resolve the APNs + FCM token in the BACKGROUND. Blocking the UI
+      // on `_waitForApns(attempts: 12)` + `getToken()` after the user
+      // tapped "Allow" was adding 3–6 s of spinner on the invitation
+      // screen before the WebView could even mount — the user saw a
+      // "very long loading" state right after the iOS prompt. The
+      // token is non-essential for the first page open: when it
+      // arrives, `onTokenRefresh` + `onTokenChanged` deliver it to the
+      // coordinator, which re-POSTs the config endpoint. The server
+      // keeps a slot for the token and binds it on the second POST.
+      unawaited(_resolveTokenInBackground());
     }
     return accepted;
+  }
+
+  Future<void> _resolveTokenInBackground() async {
+    try {
+      await _waitForApns(attempts: 12);
+      final value = await _messaging?.getToken();
+      if (value != null && value.isNotEmpty) {
+        _token = value;
+        onTokenChanged?.call(value);
+      }
+    } catch (_) {}
   }
 }

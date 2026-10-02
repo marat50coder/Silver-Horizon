@@ -34,7 +34,6 @@ class _LoadingScreenState extends State<LoadingScreen>
   // splash + progress bar: the user asked for the no-wifi screen to come up
   // first and the pipeline to defer AppsFlyer / config work until a Retry.
   bool _preflightDone = false;
-  bool _preflightOffline = false;
 
   @override
   void initState() {
@@ -68,46 +67,36 @@ class _LoadingScreenState extends State<LoadingScreen>
       }
     });
 
-    _hardDeadline = Timer(const Duration(seconds: 36), () {
+    _hardDeadline = Timer(const Duration(seconds: 36), () async {
       _barDone = true;
-      _destination ??= const NativeTide();
+      if (_destination == null) {
+        // Returning gray-funnel users must NEVER fall through to the
+        // white game when `decide()` times out — AppsFlyer's handshake
+        // can stall on slow radios, but the server already classified
+        // this install as portal on a previous launch. Prefer the
+        // cached URL, then the saved route, then the native fallback.
+        final coordinator = widget.coordinator;
+        if (coordinator != null && coordinator.vault.grayAttributed) {
+          final cached = await coordinator.vault.savedUrl();
+          if (cached != null && cached.isNotEmpty) {
+            _destination = PortalTide(cached);
+          }
+        }
+        _destination ??= const NativeTide();
+      }
       _maybeNavigate();
     });
 
-    // Start before the first frame so airplane / no-data does not sit on
-    // the branded splash while connectivity_plus reports a leftover radio.
-    unawaited(_preflight());
-  }
-
-  Future<void> _preflight() async {
-    final coordinator = widget.coordinator;
-    if (coordinator != null) {
-      // Interface-only is not enough: iOS still reports wifi/cellular when
-      // the radio is on but there is no route. Probe DNS with a short
-      // timeout so the no-wifi page wins before the splash animation.
-      final online = await coordinator.probe.canReachNetwork(
-        perHostTimeout: const Duration(milliseconds: 850),
-      );
-      if (!mounted) return;
-      if (!online) {
-        _preflightDone = true;
-        _preflightOffline = true;
-        _navigated = true;
-        _hardDeadline?.cancel();
-        if (mounted) setState(() {});
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(
-            builder: (_) => QuietTidePage(
-              probe: coordinator.probe,
-              retryBuilder: (_) => LoadingScreen(coordinator: coordinator),
-            ),
-          ),
-        );
-        return;
-      }
-    }
+    // Always let the branded splash play. The old eager DNS preflight was
+    // flashing QuietTidePage on perfectly online cold starts because the
+    // first resolver call after device wake can take 1–2 s on iOS, and
+    // Apple's connectivity_plus still reports a leftover radio state in
+    // that window. Real offline is caught by `_firstDecision` /
+    // `_returningPortal` inside `coordinator.decide()` — those paths
+    // probe DNS with the same lenient budget AND actually try to POST
+    // the config endpoint before giving up, which is a much more honest
+    // "is the network usable" check than a DNS lookup alone.
     _preflightDone = true;
-    if (mounted) setState(() {});
     _progressController.forward();
     unawaited(_resolveDestination());
   }
@@ -215,19 +204,11 @@ class _LoadingScreenState extends State<LoadingScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Until we know the device can actually reach the network, keep the
-    // branded splash off-screen. Offline / still-checking both render the
-    // no-wifi surface so a launch without internet never flashes Loading.
-    if (!_preflightDone || _preflightOffline) {
-      final coordinator = widget.coordinator;
-      if (coordinator != null) {
-        return QuietTidePage(
-          probe: coordinator.probe,
-          retryBuilder: (_) => LoadingScreen(coordinator: coordinator),
-        );
-      }
-    }
-
+    // The splash now always plays through. Offline detection is left to
+    // `coordinator.decide()`, which probes DNS AND attempts the config
+    // POST before deciding — a far more honest signal than a bare DNS
+    // probe at splash entry (which was false-positive on cold starts
+    // and flashed QuietTidePage on perfectly online launches).
     return Scaffold(
       backgroundColor: Colors.black,
       body: OrientationBuilder(
@@ -260,9 +241,7 @@ class _LoadingScreenState extends State<LoadingScreen>
               ),
 
               // Progress bar + Loading text pinned near the bottom.
-              // Hidden until the connectivity preflight passes so an offline
-              // cold start never flashes the splash before the no-wifi page.
-              if (_preflightDone && !_preflightOffline)
+              if (_preflightDone)
                 SafeArea(
                   child: Padding(
                     padding: EdgeInsets.symmetric(

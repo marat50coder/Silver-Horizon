@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -41,9 +43,15 @@ class _GleamInvitationState extends State<GleamInvitation> {
     if (_working) return;
     setState(() => _working = true);
     final granted = await widget.notifications.askPermission();
+    // The APNs token resolves in the background now — we deliberately do
+    // NOT block the "Accept" tap on `_waitForApns` + `getToken` because
+    // those add 3–6 s of spinner time after the user already granted
+    // permission. If a caller still wants the token (via onTokenReady),
+    // forward whatever is cached without blocking the handoff; the
+    // coordinator picks the token up asynchronously via onTokenChanged.
     final token = widget.notifications.token;
     if (granted && token != null && token.isNotEmpty) {
-      await widget.onTokenReady?.call(token);
+      unawaited(widget.onTokenReady?.call(token) ?? Future<void>.value());
     }
     if (!granted) await _snooze();
     _continue();

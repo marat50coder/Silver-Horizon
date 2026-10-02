@@ -90,25 +90,33 @@ class GleamCoordinator {
   Future<TideDestination> _firstDecision(
     void Function(double) progress,
   ) async {
-    // Lesson #25: on the undecided route nothing network-dependent runs
-    // before BOTH interface + real reachability pass. Only then do we warm
-    // push + attribution (which triggers the ATT prompt).
+    // Mirror Tower_Breaker `_first()`: on a brand-new install with no
+    // network, DO NOT flash a no-wifi page. Open the native game and
+    // leave the route undecided so the next launch (hopefully online)
+    // can run attribution and open the gray part. Flashing
+    // QuietTidePage on fresh OneLink installs was reported as a
+    // phantom no-wifi window on perfectly online cold starts — the
+    // DNS probe at this stage mis-fires on cold-boot resolver latency.
     if (!await probe.hasInterface()) {
       assert(() {
         // ignore: avoid_print
-        print('[HZ.GLEAM] first: no interface → offline');
+        print('[HZ.GLEAM] first: no interface → native (silent)');
         return true;
       }());
-      return const OfflineTide(returnToNative: false);
+      return const NativeTide();
     }
     progress(0.26);
-    if (!await probe.canReachNetwork()) {
+    if (!await probe.canReachNetwork(
+      perHostTimeout: const Duration(milliseconds: 1800),
+      attempts: 2,
+      retryDelay: const Duration(milliseconds: 500),
+    )) {
       assert(() {
         // ignore: avoid_print
-        print('[HZ.GLEAM] first: DNS probe failed → offline');
+        print('[HZ.GLEAM] first: DNS probe failed → native (silent)');
         return true;
       }());
-      return const OfflineTide(returnToNative: false);
+      return const NativeTide();
     }
     progress(0.44);
     // Warm push in parallel with attribution — the ATT prompt is what the
@@ -131,20 +139,20 @@ class GleamCoordinator {
     }());
     if (reply.hasDestination) {
       await vault.saveRoute(TideRoute.portal);
+      // Record the fact that this install belongs to the gray funnel so
+      // future launches can keep promoting Organic→Non-organic even
+      // after AppsFlyer stops surfacing the deferred deep-link payload.
+      await vault.markGrayAttributed();
       return PortalTide(reply.url!);
     }
-    // Conversion had not arrived (the POST body had no af_status). Do not
-    // lock the white route — the next cold start must run the pipeline again.
-    // FORCE_PORTAL bypasses this because the override itself is the signal.
-    if (!attribution.sawAttribution &&
-        !GleamHorizonConfig.debugForcePortal) {
-      assert(() {
-        // ignore: avoid_print
-        print('[HZ.GLEAM] first: no af_status yet, leaving route undecided');
-        return true;
-      }());
-      return const NativeTide();
-    }
+    // Mirror the Tower_Breaker _first() flow: lock the route to native
+    // once the server has spoken, regardless of whether an af_status
+    // actually arrived. The "undecided + retry on next cold start"
+    // trick was swallowing legitimate OneLink installs where the first
+    // POST happened before AppsFlyer finished its handshake — the gate
+    // then stayed open forever and the WebView never opened on the
+    // ONLY launch that was still eligible to show it. Returning native
+    // + saving the route is the closed-form behaviour that TB ships.
     await vault.saveRoute(TideRoute.native);
     return const NativeTide();
   }
@@ -219,6 +227,11 @@ class GleamCoordinator {
     final body = await attribution.compose(
       locale: Platform.localeName.replaceAll('-', '_'),
       pushToken: token ?? notifications.token,
+      // Sticky-promote Organic→Non-organic once we have ever opened the
+      // gray part. AppsFlyer only exposes `deep_link_value` on the install
+      // launch, so without this flag a re-open loses the attribution.
+      stickyGrayAttribution:
+          vault.grayAttributed || vault.route == TideRoute.portal,
     );
     if (GleamHorizonConfig.debugForcePortal) {
       body['af_status'] = 'Non-organic';

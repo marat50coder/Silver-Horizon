@@ -78,7 +78,7 @@ Future<void> main() async {
     vault,
     enabled: productionServicesReady,
   );
-  final attribution = GleamAttribution(agent);
+  final attribution = GleamAttribution(agent, vault: vault);
   final coordinator = GleamCoordinator(
     vault: vault,
     probe: probe,

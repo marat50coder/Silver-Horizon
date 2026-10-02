@@ -17,7 +17,11 @@ abstract final class GleamHorizonConfig {
   static const int exchangeTimeoutSeconds = 18;
   static const int installSignalSeconds = 22;
   static const int deepLinkSeconds = 6;
-  static const int attWaitSeconds = 5;
+  // AppsFlyer's `timeToWaitForATTUserAuthorization`. Tower_Breaker ships 10
+  // and the OneLink conversion handshake is noticeably more reliable at that
+  // bound — anything < 7 regularly cuts off the install payload before IDFA
+  // settles and the SDK then reports Organic for a true Non-organic install.
+  static const int attWaitSeconds = 10;
   static const int attPromptDelayMs = 410;
   static const int gcdTimeoutSeconds = 14;
 

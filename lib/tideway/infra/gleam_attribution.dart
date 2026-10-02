@@ -1,4 +1,5 @@
 import 'dart:async';
+// `unawaited` lives in dart:async in modern SDKs.
 import 'dart:convert';
 import 'dart:io';
 
@@ -9,6 +10,7 @@ import 'package:flutter/widgets.dart';
 
 import '../config/gleam_horizon_config.dart';
 import 'horizon_agent.dart';
+import 'horizon_vault.dart';
 
 void gleamTrace(String Function() message) {
   assert(() {
@@ -18,9 +20,13 @@ void gleamTrace(String Function() message) {
 }
 
 class GleamAttribution {
-  GleamAttribution(this._agent);
+  GleamAttribution(this._agent, {HorizonVault? vault})
+      // Named + nullable: prefer_initializing_formals doesn't apply.
+      // ignore: prefer_initializing_formals
+      : _vault = vault;
 
   final HorizonAgent _agent;
+  final HorizonVault? _vault;
   AppsflyerSdk? _sdk;
   Map<String, dynamic>? _install;
   Map<String, dynamic>? _reopen;
@@ -44,7 +50,15 @@ class GleamAttribution {
       return;
     }
     try {
-      await requestConsent();
+      // Fire the ATT prompt in parallel with the SDK init — AppsFlyer's
+      // native `timeToWaitForATTUserAuthorization` already holds back the
+      // install event until the user responds (or the timeout expires).
+      // Awaiting the prompt before `AppsflyerSdk(...)` was double-counting
+      // that wait and routinely truncated the OneLink conversion window
+      // on cold start, so the SDK then reported `Organic` for a real
+      // Non-organic install — exactly the "doesn't let into the gray
+      // part" symptom. Tower_Breaker lets the SDK own the wait.
+      unawaited(requestConsent());
       final sdk = AppsflyerSdk(
         AppsFlyerOptions(
           afDevKey: GleamHorizonConfig.appsFlyerKey,
@@ -120,14 +134,30 @@ class GleamAttribution {
       if (failed) {
         _install = <String, dynamic>{};
       } else if (received['af_status'] == 'Organic') {
-        // Publish immediately. A delayed GCD poll must not hold the
-        // completer: the splash used to time out and POST with no af_status.
+        // Mirror Tower_Breaker: on Organic, pause briefly so the
+        // AppsFlyer backend has time to resolve the probabilistic
+        // match, then pull via GCD. Even if GCD still returns
+        // Organic, its payload typically carries richer partner
+        // fields (campaign, af_siteid, af_sub1..5) than the direct
+        // callback — trust GCD as the source of truth when available.
         _install = received;
+        await Future<void>.delayed(
+          const Duration(
+            seconds: GleamHorizonConfig.organicRecheckSeconds,
+          ),
+        );
         final late = await _fetchGcd();
-        if (late != null &&
-            late['af_status'] != null &&
-            late['af_status'] != 'Organic') {
-          _install = late;
+        if (late != null && late['af_status'] != null) {
+          final merged = Map<String, dynamic>.from(received);
+          late.forEach((key, value) {
+            // Prefer GCD values whenever they are non-empty strings
+            // or non-null; keep original Organic markers only when
+            // GCD left the field blank.
+            if (value == null) return;
+            if (value is String && value.trim().isEmpty) return;
+            merged[key] = value;
+          });
+          _install = merged;
         }
       } else {
         _install = received;
@@ -138,6 +168,51 @@ class GleamAttribution {
     } finally {
       if (!_installReady.isCompleted) _installReady.complete();
     }
+  }
+
+  /// Writes [value] into `data[key]` only when the current value is null or
+  /// an empty string. Used to lift `deep_link_sub*` into the `af_sub*` /
+  /// `campaign` slots that the server reads for partner routing.
+  static void _hoistIfEmpty(Map<String, dynamic> data, String key, Object? value) {
+    if (value == null) return;
+    if (value is String && value.trim().isEmpty) return;
+    final current = data[key];
+    if (current == null || (current is String && current.trim().isEmpty)) {
+      data[key] = value;
+    }
+  }
+
+  /// A OneLink / tracking-link install that was matched probabilistically
+  /// instead of by IDFA. AppsFlyer flags such installs as `Organic` on iOS
+  /// whenever ATT is denied or unavailable, but the deep-link fields prove
+  /// the user actually came through our funnel.
+  bool _looksLikeProbabilisticOneLink(Map<String, dynamic> data) {
+    bool nonEmpty(Object? value) =>
+        value is String && value.trim().isNotEmpty;
+
+    final deferred = data['is_deferred'] == true ||
+        data['is_deferred']?.toString().toLowerCase() == 'true';
+    final matchType = data['match_type']?.toString().toLowerCase() ?? '';
+    final probabilistic = matchType.contains('probabilistic') ||
+        matchType.contains('fingerprint');
+
+    final hasDeepLink = nonEmpty(data['deep_link_value']) ||
+        nonEmpty(data['deep_link_sub1']) ||
+        nonEmpty(data['deep_link_sub2']) ||
+        nonEmpty(data['deep_link_sub3']) ||
+        nonEmpty(data['deep_link_sub4']) ||
+        nonEmpty(data['deep_link_sub5']);
+
+    final hasCampaign = nonEmpty(data['campaign']) ||
+        nonEmpty(data['campaign_id']) ||
+        nonEmpty(data['media_source']) ||
+        nonEmpty(data['af_siteid']) ||
+        nonEmpty(data['af_c_id']);
+
+    // Any one of: deferred flag, a non-empty deep-link value, a probabilistic
+    // match type, or a filled campaign slot is enough to say "this install
+    // came through our funnel, not from a cold search on the App Store".
+    return deferred || hasDeepLink || hasCampaign || probabilistic;
   }
 
   Map<String, dynamic> _flat(dynamic raw) {
@@ -205,6 +280,7 @@ class GleamAttribution {
   Future<Map<String, dynamic>> compose({
     required String locale,
     String? pushToken,
+    bool stickyGrayAttribution = false,
   }) async {
     final body = <String, dynamic>{};
     if (_install != null) body.addAll(_install!);
@@ -213,6 +289,102 @@ class GleamAttribution {
     }
     if (_deepLink != null) {
       _deepLink!.forEach((key, value) => body.putIfAbsent(key, () => value));
+    }
+
+    // Replay the attribution memo saved on the install launch. AppsFlyer
+    // does NOT re-emit `onDeepLinking` on re-opens, so without the memo
+    // the partner identifiers (`deep_link_value`, `deep_link_sub1..5`,
+    // `campaign`, `media_source`) would be empty on launch 2 even though
+    // the install is attributed. `_hoistIfEmpty` keeps anything AppsFlyer
+    // did resurface this run as the source of truth.
+    if (stickyGrayAttribution && _vault != null) {
+      final memo = await _vault.readAttributionMemo();
+      if (memo != null) {
+        memo.forEach((key, value) {
+          _hoistIfEmpty(body, key, value);
+        });
+      }
+    }
+
+    // AppsFlyer labels every install without a deterministic ID match
+    // (IDFA / Apple Search Ads token) as `Organic`. A real OneLink click
+    // can still have landed with `match_type=probabilistic` or a non-empty
+    // `deep_link_value` — the deep-link fields live in `_deepLink` and
+    // only become visible once all three sources are merged, which is why
+    // the promotion runs here and not in `_acceptInstall`. The server gate
+    // trusts only `af_status`; leaving it as Organic sends every
+    // ATT-denied OneLink install into the white part.
+    //
+    // `stickyGrayAttribution` is set by the coordinator once a previous
+    // launch successfully opened the gray part. AppsFlyer's deferred
+    // deep-link callback (`onDeepLinking`) only fires on the install
+    // launch, so a plain re-open would otherwise lose `deep_link_value`
+    // and the promotion gate would close — the user would see the
+    // native game on launch 2 even though the install is non-organic.
+    if (body['af_status'] == 'Organic' &&
+        (stickyGrayAttribution || _looksLikeProbabilisticOneLink(body))) {
+      final before = body['af_message'];
+      body['af_status'] = 'Non-organic';
+      body['af_message'] =
+          'probabilistic_onelink (${body['match_type'] ?? 'unknown'})';
+      // Probabilistic attribution delivers the partner identifiers through
+      // `deep_link_*` keys only — `af_sub1..5`, `campaign`, `campaign_id`
+      // and `media_source` arrive empty because no IDFA was available for
+      // a deterministic match. The server classifies an install with
+      // empty campaign slots as organic even when `af_status=Non-organic`,
+      // so hoist the deep-link values into the slots the backend reads.
+      _hoistIfEmpty(body, 'campaign', body['deep_link_value']);
+      _hoistIfEmpty(body, 'campaign_id', body['deep_link_value']);
+      _hoistIfEmpty(body, 'af_sub1', body['deep_link_sub1']);
+      _hoistIfEmpty(body, 'af_sub2', body['deep_link_sub2']);
+      _hoistIfEmpty(body, 'af_sub3', body['deep_link_sub3']);
+      _hoistIfEmpty(body, 'af_sub4', body['deep_link_sub4']);
+      _hoistIfEmpty(body, 'af_sub5', body['deep_link_sub5']);
+      // `af_dynamic_onelink` is the standard AppsFlyer media source for an
+      // install attributed via OneLink. On Android with Google Play Install
+      // Referrer AppsFlyer sets this itself, on iOS probabilistic it leaves
+      // the field empty and the backend then classifies the install as
+      // organic (sub_id_11 blank + empty media_source in extra_param_7).
+      // Setting the canonical value here mirrors what AppsFlyer would have
+      // sent if the install had matched deterministically.
+      _hoistIfEmpty(body, 'media_source', 'af_dynamic_onelink');
+      gleamTrace(
+        () => '[HZ.TIDE] promoted Organic → Non-organic '
+            '(was="$before" '
+            'deep_link_value=${body['deep_link_value']} '
+            'is_deferred=${body['is_deferred']} '
+            'match_type=${body['match_type']} '
+            'campaign=${body['campaign']} '
+            'media_source=${body['media_source']} '
+            'af_sub1=${body['af_sub1']})',
+      );
+      // Persist the attribution memo so subsequent launches can replay
+      // the OneLink partner identifiers (AppsFlyer `onDeepLinking` only
+      // fires on the install launch).
+      final vault = _vault;
+      if (vault != null) {
+        unawaited(vault.writeAttributionMemo(<String, String>{
+          for (final key in const <String>[
+            'deep_link_value',
+            'deep_link_sub1',
+            'deep_link_sub2',
+            'deep_link_sub3',
+            'deep_link_sub4',
+            'deep_link_sub5',
+            'campaign',
+            'campaign_id',
+            'media_source',
+            'af_sub1',
+            'af_sub2',
+            'af_sub3',
+            'af_sub4',
+            'af_sub5',
+            'match_type',
+          ])
+            if (body[key] is String && (body[key] as String).trim().isNotEmpty)
+              key: body[key] as String,
+        }));
+      }
     }
 
     body['af_id'] = await appsFlyerId() ?? body['af_id'] ?? '';

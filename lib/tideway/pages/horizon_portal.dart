@@ -50,6 +50,16 @@ class _HorizonPortalState extends State<HorizonPortal>
   Timer? _pageFinishTimer;
   Size? _lastMetricsSize;
   bool _holdColdReload = false;
+  // Keeps the branded splash visible under the WebView until the first
+  // page finishes painting. The default WKWebView background is black
+  // (we must keep it that way so the WebView itself does not flash
+  // white between navigations), so without this overlay the user sees
+  // a 1–3 s black rectangle while HTTPS + first paint complete.
+  bool _firstPaintDone = false;
+  // Safety net: hide the splash even if the page never fires
+  // onPageFinished (slow network, blocked resources). Mirrors the
+  // LoadingScreen hard deadline for the portal handoff.
+  Timer? _splashHideFloor;
 
   @override
   void initState() {
@@ -87,7 +97,14 @@ class _HorizonPortalState extends State<HorizonPortal>
     widget.notifications.onDestination = _openPushUrl;
     _networkSubscription = widget.probe.changes.listen((states) {
       if (states.every((state) => state == ConnectivityResult.none)) {
-        _goOffline();
+        // Verify with a real DNS probe before tearing down the WebView.
+        // connectivity_plus flips to `none` during cold start, radio
+        // switches (wifi↔cellular) and screen-wake transitions even
+        // when the network is fully usable — a direct `_goOffline()`
+        // here was flashing a phantom no-wifi page over the gray
+        // content when a user clicked the OneLink and the OS was
+        // mid-handshake.
+        _showOfflineAfterProbe();
       }
     });
 
@@ -97,6 +114,14 @@ class _HorizonPortalState extends State<HorizonPortal>
       _viewportReady = true;
       _controller.loadRequest(Uri.parse(widget.url));
     }
+    // Hard floor for the splash overlay — even if onPageFinished never
+    // fires (long-running XHR, blocked tracker, etc.), the user should
+    // not stare at the loading splash forever. 8 s matches the longest
+    // acceptable first-paint budget observed on 3G in testing.
+    _splashHideFloor = Timer(const Duration(seconds: 8), () {
+      if (!mounted || _firstPaintDone) return;
+      setState(() => _firstPaintDone = true);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _consumePending());
   }
 
@@ -106,7 +131,11 @@ class _HorizonPortalState extends State<HorizonPortal>
 
   Future<void> _settleColdViewport() async {
     _enterImmersive();
-    await Future<void>.delayed(const Duration(milliseconds: 340));
+    // Short settle so the viewport metrics stabilise before the first
+    // paint — long enough for one frame + immersive animation, short
+    // enough that the splash overlay (above the WebView) does not sit
+    // on top of a visibly stalled surface.
+    await Future<void>.delayed(const Duration(milliseconds: 180));
     if (!mounted) return;
     setState(() => _viewportReady = true);
     await _controller.loadRequest(Uri.parse(widget.url));
@@ -183,6 +212,17 @@ class _HorizonPortalState extends State<HorizonPortal>
       onPageFinished: (_) {
         _redirectAttempts = 0;
         _installShell();
+        // Hide the splash overlay as soon as the first page paints —
+        // for cold-start pushes we WAIT for the second paint (after
+        // the reload) so the user never sees the reload flash.
+        if (!_firstPaintDone) {
+          final needsReload = widget.coldLaunch &&
+              !_coldReloadIssued &&
+              !_holdColdReload;
+          if (!needsReload) {
+            setState(() => _firstPaintDone = true);
+          }
+        }
         _pageFinishTimer?.cancel();
         _pageFinishTimer = Timer(const Duration(milliseconds: 640), () async {
           if (!mounted) return;
@@ -197,6 +237,9 @@ class _HorizonPortalState extends State<HorizonPortal>
               !_holdColdReload) {
             _coldReloadIssued = true;
             await _controller.reload();
+          } else if (!_firstPaintDone && mounted) {
+            // Second-paint path after cold reload: drop the splash.
+            setState(() => _firstPaintDone = true);
           }
         });
       },
@@ -238,7 +281,15 @@ class _HorizonPortalState extends State<HorizonPortal>
     if (_offlineShown) return;
     bool online = true;
     try {
-      online = await widget.probe.canReachNetwork();
+      // Mirror the splash preflight: on a true cold start / wake the
+      // first DNS resolver call can take 1–2 s even on a strong link,
+      // so give it the same budget here instead of a single short
+      // probe that would misfire as "offline" and flash QuietTidePage.
+      online = await widget.probe.canReachNetwork(
+        perHostTimeout: const Duration(milliseconds: 1800),
+        attempts: 2,
+        retryDelay: const Duration(milliseconds: 500),
+      );
     } catch (_) {
       online = false;
     }
@@ -379,6 +430,7 @@ class _HorizonPortalState extends State<HorizonPortal>
     WidgetsBinding.instance.removeObserver(this);
     _metricsDebounce?.cancel();
     _pageFinishTimer?.cancel();
+    _splashHideFloor?.cancel();
     _networkSubscription?.cancel();
     widget.notifications.onDestination = null;
     SystemChrome.setEnabledSystemUIMode(
@@ -391,6 +443,10 @@ class _HorizonPortalState extends State<HorizonPortal>
   @override
   Widget build(BuildContext context) {
     final safe = MediaQuery.of(context).viewPadding;
+    final orientation = MediaQuery.of(context).orientation;
+    final splashAsset = orientation == Orientation.portrait
+        ? 'assets/Silver_Horizon_additional_assets/sh_splash_portrait.webp'
+        : 'assets/Silver_Horizon_additional_assets/sh_splash_landscape.webp';
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -401,8 +457,11 @@ class _HorizonPortalState extends State<HorizonPortal>
       child: Scaffold(
         backgroundColor: Colors.black,
         resizeToAvoidBottomInset: false,
-        body: _viewportReady
-            ? Padding(
+        body: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            if (_viewportReady)
+              Padding(
                 padding: EdgeInsets.only(
                   top: safe.top,
                   bottom: safe.bottom,
@@ -410,8 +469,55 @@ class _HorizonPortalState extends State<HorizonPortal>
                   right: safe.right,
                 ),
                 child: WebViewWidget(controller: _controller),
-              )
-            : const ColoredBox(color: Colors.black),
+              ),
+            // Branded splash sits above the WebView until the first
+            // page actually paints. WKWebView's own background has to
+            // stay black (so navigations do not flash white), which
+            // means without this overlay the user would stare at a
+            // black rectangle while the HTTPS handshake + initial
+            // render complete. AnimatedOpacity gives a 220 ms fade so
+            // the handoff never looks like a jump cut.
+            IgnorePointer(
+              ignoring: _firstPaintDone,
+              child: AnimatedOpacity(
+                opacity: _firstPaintDone ? 0.0 : 1.0,
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOut,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: <Widget>[
+                    Image.asset(splashAsset, fit: BoxFit.cover),
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: Alignment(0, 0.6),
+                          radius: 1.2,
+                          colors: <Color>[
+                            Colors.transparent,
+                            Color(0x55000000),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Align(
+                      alignment: Alignment(0, 0.72),
+                      child: SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
