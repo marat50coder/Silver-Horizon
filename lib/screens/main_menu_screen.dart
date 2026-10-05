@@ -41,7 +41,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   static const String _privacyUrl =
       'https://slverhorizon.com/privacy-policy';
   static const String _supportUrl =
-      'https://silverhorrizon.com/support.html';
+      'https://slverhorizon.com/support';
 
   void _openWebView(
     String title,
