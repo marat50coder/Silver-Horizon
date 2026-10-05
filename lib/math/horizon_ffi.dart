@@ -285,3 +285,16 @@ final int Function(int) hxAchClaim = _lib
     .lookup<ffi.NativeFunction<ffi.Uint32 Function(ffi.Uint32)>>(
         'hx_ach_claim')
     .asFunction<int Function(int)>();
+
+// ----- saved progress (indexed, append-only order) -----
+
+final int Function() hxStateFieldCount = _u32('hx_state_field_count');
+
+final int Function(int) hxStateGet = _lib
+    .lookup<ffi.NativeFunction<ffi.Int64 Function(ffi.Uint32)>>('hx_state_get')
+    .asFunction<int Function(int)>();
+
+final void Function(int, int) hxStateSet = _lib
+    .lookup<ffi.NativeFunction<ffi.Void Function(ffi.Uint32, ffi.Int64)>>(
+        'hx_state_set')
+    .asFunction<void Function(int, int)>();

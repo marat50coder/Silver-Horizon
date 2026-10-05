@@ -1,7 +1,6 @@
 // Player wallet + session statistics + daily bonus cooldown + free-spin
-// mode. Non-persistent (resets on cold start), matching the original Dart
-// `PlayerProfile` behaviour. Dart owns `ChangeNotifier` notification; this
-// crate just owns the numbers.
+// mode. Dart owns `ChangeNotifier` notification and saving to disk (via the
+// indexed accessors in `state.rs`); this crate just owns the numbers.
 
 use crate::ach;
 use crate::obfs::{dec16, enc16};
@@ -21,6 +20,11 @@ const DAILY: [u16; DAILY_LEN] = [
     enc16(2000, 5),
     enc16(5000, 6),
 ];
+
+#[inline(always)]
+pub const fn daily_table_len() -> u32 {
+    DAILY_LEN as u32
+}
 
 #[inline(always)]
 pub fn daily_reward(streak: u32) -> u32 {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../state/player_profile.dart';
 import '../widgets/app_layout.dart';
@@ -7,7 +8,6 @@ import 'daily_bonus_screen.dart';
 import 'game_screen.dart';
 import 'paytable_screen.dart';
 import 'statistics_screen.dart';
-import 'webview_screen.dart';
 
 /// Root menu shown after the loading screen. Central PLAY button, secondary
 /// grid of feature entry points (Paytable / Daily / Missions / Stats), and
@@ -43,22 +43,18 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
   static const String _supportUrl =
       'https://slverhorizon.com/support';
 
-  void _openWebView(
-    String title,
-    String url, {
-    bool forceLightTheme = false,
-    bool fullscreen = false,
-  }) {
-    Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => WebViewScreen(
-          title: title,
-          url: url,
-          forceLightTheme: forceLightTheme,
-          fullscreen: fullscreen,
-        ),
-      ),
+  /// Opens the page in an in-app Safari sheet (SFSafariViewController), so
+  /// the app itself ships no WKWebView.
+  Future<void> _openPage(String url) async {
+    final bool opened = await launchUrl(
+      Uri.parse(url),
+      mode: LaunchMode.inAppBrowserView,
     );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the page. Try again later.')),
+      );
+    }
   }
 
   void _push(Widget page) {
@@ -177,11 +173,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                         child: _SmallButton(
                           label: 'PRIVACY',
                           icon: Icons.privacy_tip_outlined,
-                          onTap: () => _openWebView(
-                            'Privacy Policy',
-                            _privacyUrl,
-                            forceLightTheme: true,
-                          ),
+                          onTap: () => _openPage(_privacyUrl),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -189,11 +181,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
                         child: _SmallButton(
                           label: 'SUPPORT',
                           icon: Icons.support_agent_outlined,
-                          onTap: () => _openWebView(
-                            'Support',
-                            _supportUrl,
-                            fullscreen: true,
-                          ),
+                          onTap: () => _openPage(_supportUrl),
                         ),
                       ),
                     ],

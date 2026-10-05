@@ -92,6 +92,10 @@ enum RustGlue {
             unsafeBitCast(hx_ach_completed_count as @convention(c) () -> UInt32, to: UnsafeRawPointer.self),
             unsafeBitCast(hx_ach_claimable_count as @convention(c) () -> UInt32, to: UnsafeRawPointer.self),
             unsafeBitCast(hx_ach_claim as @convention(c) (UInt32) -> UInt32, to: UnsafeRawPointer.self),
+
+            unsafeBitCast(hx_state_field_count as @convention(c) () -> UInt32, to: UnsafeRawPointer.self),
+            unsafeBitCast(hx_state_get as @convention(c) (UInt32) -> Int64, to: UnsafeRawPointer.self),
+            unsafeBitCast(hx_state_set as @convention(c) (UInt32, Int64) -> Void, to: UnsafeRawPointer.self),
         ]
         // XOR every function pointer's numeric value into a global sink.
         // The sink is observable (nonisolated(unsafe) static var) and the

@@ -103,6 +103,11 @@ uint32_t hx_ach_completed_count(void);
 uint32_t hx_ach_claimable_count(void);
 uint32_t hx_ach_claim(uint32_t id);
 
+/* saved progress (indexed; append-only order, see src/state.rs) */
+uint32_t hx_state_field_count(void);
+int64_t  hx_state_get(uint32_t idx);
+void     hx_state_set(uint32_t idx, int64_t value);
+
 #ifdef __cplusplus
 }
 #endif

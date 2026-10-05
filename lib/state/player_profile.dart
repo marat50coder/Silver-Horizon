@@ -9,8 +9,8 @@ import 'achievements.dart';
 /// [ChangeNotifier] shell that forwards reads and writes across FFI and
 /// pokes Flutter listeners whenever the Rust-owned state changes.
 ///
-/// State is intentionally not persisted (resets on cold start), matching
-/// the "for fun casino demo" product behaviour.
+/// Progress survives restarts: [ProgressStore] saves the Rust state after
+/// every change this class (or [Achievements]) announces.
 class PlayerProfile extends ChangeNotifier {
   PlayerProfile._();
   static final PlayerProfile instance = PlayerProfile._();

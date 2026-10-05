@@ -3,7 +3,8 @@
 // Everything here is "pure logic": weighted symbol selection, grid
 // generation with the scatter-per-reel cap, 10-payline evaluation, bonus
 // wheel pick, big-win tier mapping, wallet / stats / free-spins /
-// achievements. UI, animation, persistence, and audio stay in Dart.
+// achievements. UI, animation, persistence, and audio stay in Dart
+// (Dart saves progress through the indexed `hx_state_*` accessors).
 //
 // Design notes (anti-fingerprint, see .cursor/rules/apple_moderation_hardening.mdc):
 //
@@ -22,7 +23,7 @@
 //     crate into one dense module where individual helpers lose their
 //     identity in the final `__TEXT`.
 //
-// Nothing in this crate talks to the network. Nothing persists state.
+// Nothing in this crate talks to the network or touches the filesystem.
 
 #![allow(clippy::missing_safety_doc)]
 
@@ -36,5 +37,6 @@ mod profile;
 mod rng;
 mod slot;
 mod spin;
+mod state;
 mod symbols;
 mod sync_cell;

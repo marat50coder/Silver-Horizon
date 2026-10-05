@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'screens/loading_screen.dart';
+import 'state/progress_store.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  ProgressStore.instance.init();
   // Portrait orientation is enforced from the game screen only; the loading
   // screen supports both portrait and landscape.
   SystemChrome.setPreferredOrientations(<DeviceOrientation>[

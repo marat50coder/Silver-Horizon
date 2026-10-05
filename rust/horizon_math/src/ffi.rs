@@ -14,6 +14,7 @@ use crate::bonus;
 use crate::paylines;
 use crate::profile;
 use crate::spin;
+use crate::state;
 use crate::symbols;
 
 // -------- meta --------
@@ -342,7 +343,7 @@ pub extern "C" fn hx_profile_daily_reward_at(streak: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn hx_profile_daily_table_len() -> u32 {
-    7
+    profile::daily_table_len()
 }
 
 #[no_mangle]
@@ -397,4 +398,21 @@ pub extern "C" fn hx_ach_claimable_count() -> u32 {
 #[no_mangle]
 pub extern "C" fn hx_ach_claim(id: u32) -> u32 {
     ach::claim(id as usize)
+}
+
+// ----- saved progress (indexed, see state.rs) -----
+
+#[no_mangle]
+pub extern "C" fn hx_state_field_count() -> u32 {
+    state::field_count()
+}
+
+#[no_mangle]
+pub extern "C" fn hx_state_get(idx: u32) -> i64 {
+    state::get(idx)
+}
+
+#[no_mangle]
+pub extern "C" fn hx_state_set(idx: u32, value: i64) {
+    state::set(idx, value)
 }

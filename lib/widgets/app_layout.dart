@@ -23,7 +23,7 @@ class AppLayout {
       isTablet(context) ? 640 : double.infinity;
 
   /// Max width for secondary screens (paytable, missions, stats, daily,
-  /// bonus wheel, webview placeholders).
+  /// bonus wheel).
   static double contentMaxWidth(BuildContext context) =>
       isTablet(context) ? 720 : double.infinity;
 
