@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launch splash: solid navy that matches the top of the Flutter loading
+     screen, so the user never sees a white flash between the Android
+     launch screen and the first Flutter frame. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/launchBackground" />
+</layer-list>

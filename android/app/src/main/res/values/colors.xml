@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pre-Flutter launch colour. Matches the top of the loading splash so
+         the hand-off from the Android launch screen to Flutter's first
+         frame is seamless (no white flash). -->
+    <color name="launchBackground">#000814</color>
+	<color name="ic_launcher_background">#000814</color>
+</resources>

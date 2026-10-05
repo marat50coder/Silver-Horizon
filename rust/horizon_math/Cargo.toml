@@ -6,7 +6,7 @@ publish = false
 
 [lib]
 name       = "horizon_math"
-crate-type = ["staticlib"]
+crate-type = ["cdylib"]
 
 [profile.release]
 opt-level        = "z"

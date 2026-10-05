@@ -44,8 +44,9 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# Rust build artefacts. The device static library is committed so
-# Codemagic can archive without installing cargo; rebuild and commit it
-# whenever rust/horizon_math/src changes.
+# Rust build artefacts. The .so slices under android/app/src/main/jniLibs
+# are rebuilt from source on every `flutter build` via the `buildRustMath`
+# Gradle task (see android/app/build.gradle.kts and rust/build_android.sh)
+# — they are not committed.
 /rust/horizon_math/target/
-/ios/Rust/sim/*.a
+/android/app/src/main/jniLibs/

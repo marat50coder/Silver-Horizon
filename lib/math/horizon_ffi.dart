@@ -1,23 +1,23 @@
-// Raw `dart:ffi` bindings over the horizon_math Rust static library.
+// Raw `dart:ffi` bindings over the horizon_math Rust dynamic library.
 //
-// The library is statically linked into Runner.app (see
-// `ios/Runner.xcodeproj/project.pbxproj` → OTHER_LDFLAGS = -lhorizon_math
-// and the `Build Rust math` build phase). On iOS all exports live in the
-// main executable's symbol table and we reach them through
-// `DynamicLibrary.process()`.
+// On Android the crate is cross-compiled with cargo-ndk into a cdylib
+// (`libhorizon_math.so`) for every supported ABI (arm64-v8a, armeabi-v7a,
+// x86_64, x86). Gradle picks the .so files out of
+// `android/app/src/main/jniLibs/<abi>/` and bundles them into the APK/AAB
+// — the Android loader then resolves the library by name through
+// `DynamicLibrary.open('libhorizon_math.so')`.
 //
 // Everything here is 1:1 with `rust/horizon_math/include/horizon_math.h`.
-// Keep the three files (`ffi.rs`, `horizon_math.h`, this file) in sync
-// when a new entry point is added — there's a sibling `RustGlue.swift`
-// that must also list the new symbol to keep it from being dead-stripped
-// in release builds.
+// Keep both files in sync when a new entry point is added.
 //
-// This file deliberately does NOT depend on Flutter. It can be swapped
-// out for a desktop/Android build by changing the `_lib` lookup.
+// This file deliberately does NOT depend on Flutter.
 
 import 'dart:ffi' as ffi;
+import 'dart:io' show Platform;
 
-final ffi.DynamicLibrary _lib = ffi.DynamicLibrary.process();
+final ffi.DynamicLibrary _lib = Platform.isAndroid
+    ? ffi.DynamicLibrary.open('libhorizon_math.so')
+    : ffi.DynamicLibrary.process();
 
 // ----- meta -----
 

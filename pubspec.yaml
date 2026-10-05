@@ -26,7 +26,9 @@ flutter:
     - assets/Silver_Horizon_gameplay_assets/
 
 flutter_launcher_icons:
-  ios: true
-  android: false
+  ios: false
+  android: true
   image_path: "assets/Silver_Horizon_additional_assets/Icon.png"
-  remove_alpha_ios: true
+  min_sdk_android: 23
+  adaptive_icon_background: "#000814"
+  adaptive_icon_foreground: "assets/Silver_Horizon_additional_assets/Icon.png"
