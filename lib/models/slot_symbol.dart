@@ -34,8 +34,7 @@ enum SlotSymbol {
   /// dump of the static library).
   int payout(int count) => rust.hxSymbolPayout(rustIndex, count);
 
-  /// WILD and BAR both substitute for any paying symbol — matches the
-  /// Rust `is_wild` predicate.
+  /// Only WILD substitutes for another symbol. BAR pays on its own line.
   bool get isWild => rust.hxSymbolIsWild(rustIndex) != 0;
 
   bool get isScatter => rust.hxSymbolIsScatter(rustIndex) != 0;

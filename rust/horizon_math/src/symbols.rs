@@ -40,7 +40,9 @@ pub const WILD: u8 = 9;
 pub const SCATTER: u8 = 10;
 
 // Scrambled weights (de-obfs via `mask8(i)`): raw plaintext values match
-// the Dart source — 22, 20, 18, 15, 13, 11, 9, 7, 5, 4, 3.
+// the Dart source — 22, 20, 18, 15, 13, 11, 9, 7, 5, 4, 4.
+// Scatter is 4 (not 3): with at most one scatter per reel, 3+ scatters
+// land on about 0.65% of spins, the closest whole weight to 0.66%.
 const WEIGHTS: [u8; SYMBOL_COUNT] = [
     enc8(22, 0),
     enc8(20, 1),
@@ -52,7 +54,7 @@ const WEIGHTS: [u8; SYMBOL_COUNT] = [
     enc8(7, 7),
     enc8(5, 8),
     enc8(4, 9),
-    enc8(3, 10),
+    enc8(4, 10),
 ];
 
 // Flat pay-table of 11 symbols × 6 counts (0..=5), stored as scrambled
@@ -75,7 +77,7 @@ const fn build_pay_table() -> [u16; PAY_LEN] {
         out[i] = enc16(0, i);
         i += 1;
     }
-    let entries: [(u8, usize, u16); 24] = [
+    let entries: [(u8, usize, u16); 27] = [
         (CHERRY, 3, 1),
         (CHERRY, 4, 3),
         (CHERRY, 5, 8),
@@ -91,6 +93,10 @@ const fn build_pay_table() -> [u16; PAY_LEN] {
         (BELL, 3, 3),
         (BELL, 4, 8),
         (BELL, 5, 25),
+        // BAR sits between bell (weight 13) and star (weight 9).
+        (BAR, 3, 3),
+        (BAR, 4, 10),
+        (BAR, 5, 30),
         (STAR, 3, 4),
         (STAR, 4, 12),
         (STAR, 5, 35),
@@ -100,7 +106,7 @@ const fn build_pay_table() -> [u16; PAY_LEN] {
         (CROWN, 3, 8),
         (CROWN, 4, 25),
         (CROWN, 5, 80),
-        // BAR, WILD, SCATTER: no line payout of their own.
+        // WILD and SCATTER have no line payout of their own.
     ];
     let mut j = 0;
     while j < entries.len() {
@@ -139,7 +145,7 @@ pub fn is_scatter(sym: u8) -> bool {
 
 #[inline(always)]
 pub fn is_wild(sym: u8) -> bool {
-    sym == WILD || sym == BAR
+    sym == WILD
 }
 
 /// Weighted pick across the full 11-symbol strip, matching the Dart

@@ -6,7 +6,7 @@ import '../widgets/themed_scaffold.dart';
 
 /// Paytable / info screen: shows every symbol with its 3/4/5-of-a-kind
 /// multiplier, the shape of every payline, and the special rules for the
-/// Wild, Bar and Scatter tiles.
+/// Wild and Scatter tiles.
 class PaytableScreen extends StatelessWidget {
   const PaytableScreen({super.key});
 
@@ -25,13 +25,6 @@ class PaytableScreen extends StatelessWidget {
           const SizedBox(height: 20),
           const _SectionTitle('SPECIAL TILES'),
           const SizedBox(height: 8),
-          const _SpecialTileRow(
-            symbol: SlotSymbol.bar,
-            title: 'BAR — Wild Substitute',
-            description:
-                'Substitutes for any regular symbol to complete a line. '
-                'Bar tiles themselves do not pay.',
-          ),
           const _SpecialTileRow(
             symbol: SlotSymbol.wild,
             title: 'WILD — Line Extender',
@@ -67,6 +60,7 @@ class PaytableScreen extends StatelessWidget {
     SlotSymbol.watermelon,
     SlotSymbol.clever,
     SlotSymbol.bell,
+    SlotSymbol.bar,
     SlotSymbol.star,
     SlotSymbol.diamond,
     SlotSymbol.crown,
