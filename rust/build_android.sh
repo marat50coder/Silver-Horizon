@@ -29,6 +29,20 @@ CRATE_DIR="$HERE/horizon_math"
 PROJECT_ROOT="$HERE/.."
 JNI_LIBS_DIR="$PROJECT_ROOT/android/app/src/main/jniLibs"
 
+# Gradle's Exec task runs this script in a sanitised shell that does NOT
+# import the user's shell dotfiles. rustup / cargo live in ~/.cargo/bin
+# on every mac + linux dev box and on Codemagic / Bitrise CI builders
+# after a rustup bootstrap. Add it to PATH ourselves so `cargo` resolves
+# regardless of the launching shell. ~/.cargo/env (written by rustup)
+# also tweaks RUSTUP_HOME / CARGO_HOME when they are not the defaults.
+if [ -n "${HOME:-}" ]; then
+    export PATH="${HOME}/.cargo/bin:${PATH}"
+    if [ -f "${HOME}/.cargo/env" ]; then
+        # shellcheck disable=SC1090,SC1091
+        . "${HOME}/.cargo/env"
+    fi
+fi
+
 PROFILE="${1:-release}"
 CARGO_FLAG=""
 case "$PROFILE" in

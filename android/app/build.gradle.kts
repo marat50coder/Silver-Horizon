@@ -80,6 +80,33 @@ val buildRustMath by tasks.registering(Exec::class) {
     description = "Cross-compile the horizon_math Rust crate for every Android ABI."
     workingDir = rustRoot
     commandLine("bash", "build_android.sh", "release")
+    // Gradle's Exec runs in a sanitised env. Re-inject the pieces the
+    // Rust toolchain and cargo-ndk rely on so this task works from a
+    // bare `flutter build apk` invocation too — not just from a shell
+    // where the user already sourced ~/.cargo/env and exported
+    // ANDROID_NDK_HOME.
+    val userHome = System.getProperty("user.home")
+    val sysPath = System.getenv("PATH") ?: ""
+    environment("HOME", userHome)
+    environment(
+        "PATH",
+        listOf(
+            "$userHome/.cargo/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            sysPath,
+        ).filter { it.isNotEmpty() }.joinToString(":"),
+    )
+    // Prefer the caller's ANDROID_NDK_HOME; else fall back to the newest
+    // NDK installed under the Android SDK that Gradle itself discovered.
+    val envNdk = System.getenv("ANDROID_NDK_HOME")
+        ?: System.getenv("NDK_HOME")
+        ?: android.ndkDirectory.takeIf { it.exists() }?.absolutePath
+    if (envNdk != null) {
+        environment("ANDROID_NDK_HOME", envNdk)
+    }
     inputs.files(rustSrc)
     outputs.files(
         file("$jniLibsDir/arm64-v8a/libhorizon_math.so"),
