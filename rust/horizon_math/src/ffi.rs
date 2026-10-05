@@ -23,6 +23,13 @@ pub extern "C" fn hx_version() -> u32 {
     1
 }
 
+/// Debug builds call this with `1` so scatter draws use the boosted
+/// weight. Release never calls it; the flag defaults to off.
+#[no_mangle]
+pub extern "C" fn hx_set_debug_bonus(enabled: u8) {
+    symbols::set_debug_bonus(enabled != 0);
+}
+
 // -------- symbols --------
 
 #[no_mangle]

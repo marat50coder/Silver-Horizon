@@ -9,6 +9,21 @@
 
 use crate::obfs::{dec16, dec8, enc16, enc8};
 use crate::rng::Pcg32;
+use crate::sync_cell::IsolateCell;
+
+/// Debug-only scatter boost. Stays off unless Dart calls
+/// `hx_set_debug_bonus(1)` — that call is gated on `kDebugMode`, so a
+/// release APK keeps the production weight of 3.
+static DEBUG_BONUS: IsolateCell<u8> = IsolateCell::new(0);
+
+/// Scatter weight used while the debug boost is on. Production weight is
+/// 3 (~0.3% of spins hit 3+ scatters). 28 lands a bonus on roughly every
+/// other spin, which is enough to exercise the wheel without forcing it.
+const DEBUG_SCATTER_WEIGHT: u32 = 28;
+
+pub fn set_debug_bonus(on: bool) {
+    *DEBUG_BONUS.get() = if on { 1 } else { 0 };
+}
 
 pub const SYMBOL_COUNT: usize = 11;
 
@@ -101,6 +116,9 @@ const PAY_TABLE: [u16; PAY_LEN] = build_pay_table();
 
 #[inline(never)]
 pub fn weight(sym: u8) -> u32 {
+    if sym == SCATTER && *DEBUG_BONUS.get() != 0 {
+        return DEBUG_SCATTER_WEIGHT;
+    }
     let i = sym as usize;
     dec8(WEIGHTS[i], i) as u32
 }

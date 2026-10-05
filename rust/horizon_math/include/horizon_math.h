@@ -20,6 +20,7 @@ extern "C" {
 
 /* meta */
 uint32_t hx_version(void);
+void     hx_set_debug_bonus(uint8_t enabled);
 
 /* symbols */
 uint32_t hx_symbol_count(void);

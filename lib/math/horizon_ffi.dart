@@ -25,6 +25,20 @@ final int Function() hxVersion = _lib
     .lookup<ffi.NativeFunction<ffi.Uint32 Function()>>('hx_version')
     .asFunction<int Function()>();
 
+/// Resolved on first call so a release binary that never asks for the
+/// boost, and the widget test that never enters `main`, do not have to
+/// look the symbol up at library load.
+void Function(int)? _hxSetDebugBonus;
+
+void hxSetDebugBonus(int enabled) {
+  _hxSetDebugBonus ??= _lib
+      .lookup<ffi.NativeFunction<ffi.Void Function(ffi.Uint8)>>(
+        'hx_set_debug_bonus',
+      )
+      .asFunction<void Function(int)>();
+  _hxSetDebugBonus!(enabled);
+}
+
 // ----- symbols -----
 
 final int Function() hxSymbolCount = _lib
