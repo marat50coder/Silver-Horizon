@@ -385,7 +385,7 @@ class _BonusExplainer extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
           Text(
-            'WHEEL OF SILVER HORIZON',
+            'WHEEL OF GOLDEN CROWN',
             style: TextStyle(
               color: Color(0xFFFFE082),
               fontSize: 13,

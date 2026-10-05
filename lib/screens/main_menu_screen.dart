@@ -86,7 +86,7 @@ class _MainMenuScreenState extends State<MainMenuScreen> {
             'assets/Silver_Horizon_additional_assets/Vertical_Loading_Screen.webp',
             fit: BoxFit.cover,
             // On iPad the aspect is closer to square, so anchor the crop at
-            // the top so the SILVER HORIZON logo baked into the artwork stays
+            // the top so the GOLDEN CROWN logo baked into the artwork stays
             // fully visible instead of being cut off.
             alignment: AppLayout.isTablet(context)
                 ? Alignment.topCenter

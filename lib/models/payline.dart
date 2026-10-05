@@ -28,7 +28,7 @@ class Payline {
   }
 }
 
-/// The 10 paylines used by Silver Horizon.
+/// The 10 paylines used by Golden Crown.
 ///
 /// Colors are chosen to be visually distinct so multiple simultaneous wins
 /// can be told apart when overlaid on the reels. `rows` arrays MUST match

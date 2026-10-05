@@ -249,7 +249,7 @@ class _BonusHeader extends StatelessWidget {
         Text(
           mega
               ? 'Bigger prizes for 4+ scatters'
-              : 'Spin the Wheel of Silver Horizon',
+              : 'Spin the Wheel of Golden Crown',
           style: const TextStyle(
             color: Colors.white70,
             fontSize: 13,

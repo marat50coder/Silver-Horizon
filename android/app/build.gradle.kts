@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "com.silverhorizon.horizongame"
+    namespace = "com.goldencrown.crowngame"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -18,7 +18,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.silverhorizon.horizongame"
+        applicationId = "com.goldencrown.crowngame"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode

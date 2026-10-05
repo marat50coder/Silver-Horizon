@@ -268,7 +268,7 @@ class _Disclaimer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Text(
-      'Stats reset when the app is closed. Silver Horizon is for entertainment '
+      'Stats reset when the app is closed. Golden Crown is for entertainment '
       'only — no real money is wagered or won.',
       textAlign: TextAlign.center,
       style: TextStyle(

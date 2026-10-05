@@ -27,11 +27,11 @@ void main() {
       statusBarBrightness: Brightness.dark,
     ),
   );
-  runApp(const SilverHorizonApp());
+  runApp(const GoldenCrownApp());
 }
 
-class SilverHorizonApp extends StatelessWidget {
-  const SilverHorizonApp({super.key});
+class GoldenCrownApp extends StatelessWidget {
+  const GoldenCrownApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -52,7 +52,7 @@ class SilverHorizonApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'Silver Horizon',
+      title: 'Golden Crown',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
